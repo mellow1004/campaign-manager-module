@@ -1,8 +1,5 @@
 import { CampaignStatus } from "@prisma/client";
 import Link from "next/link";
-
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { prisma } from "@/lib/prisma";
 
 type HealthLevel = "green" | "yellow" | "red";
@@ -15,334 +12,267 @@ const STATUS_LABELS: Record<CampaignStatus, string> = {
   closed: "Avslutad",
 };
 
-const CHANNEL_LABELS: Record<string, string> = {
-  phone: "Telefon",
-  email: "Email",
-  linkedin: "LinkedIn",
+const CHANNEL_LABELS: Record<string, { label: string; cls: string }> = {
+  phone:    { label: "Telefon",  cls: "bg-[rgba(127,119,221,0.12)] text-[#534AB7]" },
+  email:    { label: "Email",    cls: "bg-[rgba(29,158,117,0.12)] text-[#0F6E56]" },
+  linkedin: { label: "LinkedIn", cls: "bg-[rgba(55,138,221,0.12)] text-[#185FA5]" },
 };
 
-function getStartOfWeek(date: Date): Date {
-  const copy = new Date(date);
-  const weekday = copy.getDay();
-  const diff = weekday === 0 ? -6 : 1 - weekday;
-  copy.setDate(copy.getDate() + diff);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
+const STATUS_CLS: Record<CampaignStatus, string> = {
+  active:     "bg-[rgba(29,158,117,0.1)] text-[#0F6E56]",
+  paused:     "bg-zinc-100 text-zinc-500",
+  onboarding: "bg-sky-100 text-sky-700",
+  closing:    "bg-amber-100 text-amber-700",
+  closed:     "bg-zinc-100 text-zinc-400",
+};
+
+function getWeekStart(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getDay();
+  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
-function getIsoWeekNumber(date: Date): number {
-  const copy = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNumber = copy.getUTCDay() || 7;
-  copy.setUTCDate(copy.getUTCDate() + 4 - dayNumber);
-  const yearStart = new Date(Date.UTC(copy.getUTCFullYear(), 0, 1));
-  return Math.ceil((((copy.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+function isoWeek(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const y = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d.getTime() - y.getTime()) / 86400000 + 1) / 7);
 }
 
-function toMidnight(date: Date): Date {
-  const copy = new Date(date);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
+function healthLevel(score: number): HealthLevel {
+  return score < 40 ? "red" : score < 75 ? "yellow" : "green";
 }
 
-function getDaysUntilNextTuesday(date: Date): number {
-  const weekday = date.getDay();
-  const targetWeekday = 2;
-  return (targetWeekday - weekday + 7) % 7;
+function healthCls(level: HealthLevel) {
+  return level === "green" ? "bg-[#1D9E75]" : level === "yellow" ? "bg-[#EF9F27]" : "bg-[#E24B4A]";
 }
 
-function formatTopbarDate(date: Date): string {
-  const formatted = new Intl.DateTimeFormat("sv-SE", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(date);
-
-  const capitalized = `${formatted.charAt(0).toUpperCase()}${formatted.slice(1)}`;
-  return `${capitalized} · v.${getIsoWeekNumber(date)}`;
+function barCls(pct: number) {
+  return pct < 40 ? "bg-[#E24B4A]" : pct < 75 ? "bg-[#EF9F27]" : "bg-[#1D9E75]";
 }
 
-function getHealthLevel(score: number): HealthLevel {
-  if (score < 40) {
-    return "red";
-  }
-  if (score < 75) {
-    return "yellow";
-  }
-  return "green";
-}
-
-function healthDotClass(level: HealthLevel): string {
-  if (level === "green") {
-    return "bg-[#1D9E75]";
-  }
-  if (level === "yellow") {
-    return "bg-[#EF9F27]";
-  }
-  return "bg-[#E24B4A]";
-}
-
-function progressIndicatorClass(progress: number): string {
-  if (progress < 40) {
-    return "bg-rose-500";
-  }
-  if (progress < 75) {
-    return "bg-amber-500";
-  }
-  return "bg-emerald-600";
-}
-
-function statusClass(status: CampaignStatus): string {
-  switch (status) {
-    case "active":
-      return "bg-[rgba(29,158,117,0.1)] text-[#0F6E56]";
-    case "paused":
-      return "bg-zinc-100 text-zinc-700";
-    case "onboarding":
-      return "bg-sky-100 text-sky-800";
-    case "closing":
-      return "bg-amber-100 text-amber-800";
-    case "closed":
-      return "bg-zinc-100 text-zinc-600";
-    default:
-      return "bg-zinc-100 text-zinc-700";
-  }
+function daysToTuesday(date: Date): number {
+  const d = date.getDay();
+  return (2 - d + 7) % 7;
 }
 
 export default async function DashboardPage() {
-  const today = toMidnight(new Date());
-  const weekStart = getStartOfWeek(today);
-  const previousWeekStart = new Date(weekStart);
-  previousWeekStart.setDate(previousWeekStart.getDate() - 7);
-  const previousWeekEnd = new Date(weekStart);
-  previousWeekEnd.setMilliseconds(previousWeekEnd.getMilliseconds() - 1);
-  const reportDaysLeft = getDaysUntilNextTuesday(today);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const weekStart = getWeekStart(today);
+  const prevWeekStart = new Date(weekStart);
+  prevWeekStart.setDate(prevWeekStart.getDate() - 7);
 
-  const [campaigns, loggedPm] = await Promise.all([
+  const [campaigns, pm] = await Promise.all([
     prisma.campaign.findMany({
-      include: {
+      select: {
+        campaign_id: true,
+        client_name: true,
+        market: true,
+        channels_enabled: true,
+        status: true,
+        health_score: true,
+        weekly_meeting_target: true,
+        monthly_meeting_target: true,
+        meetings_booked_mtd: true,
         activity_logs: {
-          where: {
-            date: {
-              gte: previousWeekStart,
-              lte: today,
-            },
-          },
-          select: {
-            date: true,
-            meetings_booked: true,
-          },
+          where: { date: { gte: prevWeekStart, lte: today } },
+          select: { date: true, meetings_booked: true },
         },
       },
-      orderBy: {
-        client_name: "asc",
-      },
+      orderBy: { client_name: "asc" },
     }),
-    prisma.user.findFirst({
-      where: {
-        role: "pm",
-      },
-      select: {
-        name: true,
-        avatar_initials: true,
-      },
-    }),
+    prisma.user.findFirst({ where: { role: "pm" }, select: { name: true, avatar_initials: true } }),
   ]);
 
-  const campaignCards = campaigns.map((campaign) => {
-    const meetingsThisWeek = campaign.activity_logs
-      .filter((log) => log.date >= weekStart)
-      .reduce((sum, log) => sum + log.meetings_booked, 0);
-    const meetingsLastWeek = campaign.activity_logs
-      .filter((log) => log.date >= previousWeekStart && log.date <= previousWeekEnd)
-      .reduce((sum, log) => sum + log.meetings_booked, 0);
-
-    return {
-      campaign,
-      meetingsThisWeek,
-      meetingsLastWeek,
-    };
+  const cards = campaigns.map((c) => {
+    const thisWeek = c.activity_logs.filter((l) => l.date >= weekStart).reduce((s, l) => s + l.meetings_booked, 0);
+    const lastWeek = c.activity_logs.filter((l) => l.date < weekStart).reduce((s, l) => s + l.meetings_booked, 0);
+    return { c, thisWeek, lastWeek };
   });
 
-  const activeCampaigns = campaigns.filter((campaign) => campaign.status === "active").length;
-  const pausedCampaigns = campaigns.filter((campaign) => campaign.status === "paused").length;
-  const closingCampaigns = campaigns.filter((campaign) => campaign.status === "closing").length;
-  const reportsToSend = campaigns.filter((campaign) => campaign.status === "active" && campaign.health_score < 75).length;
-  const totalMeetingsThisWeek = campaignCards.reduce((sum, card) => sum + card.meetingsThisWeek, 0);
-  const totalMeetingsLastWeek = campaignCards.reduce((sum, card) => sum + card.meetingsLastWeek, 0);
-  const meetingDelta = totalMeetingsThisWeek - totalMeetingsLastWeek;
-  const averageHealth = campaigns.length > 0
-    ? Math.round(campaigns.reduce((sum, campaign) => sum + campaign.health_score, 0) / campaigns.length)
-    : 0;
-  const redCampaigns = campaigns.filter((campaign) => campaign.health_score < 40).length;
+  const totalThis  = cards.reduce((s, x) => s + x.thisWeek, 0);
+  const totalLast  = cards.reduce((s, x) => s + x.lastWeek, 0);
+  const delta      = totalThis - totalLast;
+  const avgHealth  = campaigns.length ? Math.round(campaigns.reduce((s, c) => s + c.health_score, 0) / campaigns.length) : 0;
+  const redCount   = campaigns.filter((c) => c.health_score < 40).length;
+  const activeCount   = campaigns.filter((c) => c.status === "active").length;
+  const pausedCount   = campaigns.filter((c) => c.status === "paused").length;
+  const closingCount  = campaigns.filter((c) => c.status === "closing").length;
+  const reportsCount  = campaigns.filter((c) => ["active","closing"].includes(c.status)).length;
+  const dayNames = ["söndag","måndag","tisdag","onsdag","torsdag","fredag","lördag"];
+  const monthNames = ["januari","februari","mars","april","maj","juni","juli","augusti","september","oktober","november","december"];
+  const dateLabel = `${dayNames[today.getDay()].charAt(0).toUpperCase()}${dayNames[today.getDay()].slice(1)} ${today.getDate()} ${monthNames[today.getMonth()]} ${today.getFullYear()} · v.${isoWeek(today)}`;
 
   return (
-    <div className="flex min-h-screen overflow-hidden bg-[#F4F4F5] text-zinc-900">
-      <aside className="hidden w-[200px] shrink-0 flex-col bg-[#18181B] md:flex">
-        <div className="border-b border-white/10 px-4 pt-[18px] pb-3">
-          <p className="text-[15px] font-medium text-white">Otto</p>
-          <p className="mt-0.5 text-[10px] text-white/35">CoSeller Suite</p>
+    <div className="flex h-screen overflow-hidden bg-[#F4F4F5] text-zinc-900" style={{ fontSize: 13 }}>
+
+      {/* SIDEBAR */}
+      <aside className="flex w-[200px] min-w-[200px] shrink-0 flex-col bg-[#18181B]">
+        <div className="border-b border-white/[0.07] px-4 py-3">
+          <p className="text-[15px] font-medium text-white leading-tight">Otto</p>
+          <p className="text-[10px] text-white/35 leading-tight mt-[1px]">CoSeller Suite</p>
         </div>
-        <nav className="flex-1 space-y-0.5 px-2 py-3 text-[12px]">
-          <div className="flex items-center gap-2 rounded-md bg-[rgba(29,158,117,0.2)] px-[10px] py-2 text-[#3ECFA0]">
-            ▦ Dashboard
-          </div>
-          <div className="flex items-center gap-2 rounded-md px-[10px] py-2 text-white/50">
-            ◈ Kampanjer
-            <span className="ml-auto rounded-full bg-[rgba(226,75,74,0.25)] px-1.5 py-0.5 text-[10px] text-[#F09595]">
-              12
-            </span>
-          </div>
-          <div className="flex items-center gap-2 rounded-md px-[10px] py-2 text-white/50">
-            ✓ Mina todos
-            <span className="ml-auto rounded-full bg-[rgba(226,75,74,0.25)] px-1.5 py-0.5 text-[10px] text-[#F09595]">
-              5
-            </span>
-          </div>
-          <div className="rounded-md px-[10px] py-2 text-white/50">↗ Rapporter</div>
-          <div className="rounded-md px-[10px] py-2 text-white/50">≡ Checklistor</div>
-          <div className="rounded-md px-[10px] py-2 text-white/50">⚙ ICP-bibliotek</div>
+        <nav className="flex-1 space-y-[2px] px-2 py-3">
+          {[
+            { label: "▦ Dashboard", active: true, badge: null },
+            { label: "◈ Kampanjer", active: false, badge: campaigns.length },
+            { label: "✓ Mina todos", active: false, badge: 5 },
+            { label: "↗ Rapporter", active: false, badge: null },
+            { label: "≡ Checklistor", active: false, badge: null },
+            { label: "⚙ ICP-bibliotek", active: false, badge: null },
+          ].map(({ label, active, badge }) => (
+            <div key={label} className={`flex items-center gap-2 rounded-[6px] px-[10px] py-2 text-[12px] leading-tight cursor-pointer ${active ? "bg-[rgba(29,158,117,0.2)] text-[#3ECFA0]" : "text-white/45"}`}>
+              {label}
+              {badge !== null && (
+                <span className="ml-auto rounded-[10px] bg-[rgba(226,75,74,0.25)] px-[6px] py-[1px] text-[10px] text-[#F09595]">{badge}</span>
+              )}
+            </div>
+          ))}
         </nav>
-        <div className="flex items-center gap-2 border-t border-white/10 px-3.5 py-3">
-          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#1D9E75] text-[10px] font-medium text-white">
-            {loggedPm?.avatar_initials ?? "PM"}
+        <div className="flex items-center gap-2 border-t border-white/[0.07] px-[14px] py-3">
+          <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-[#1D9E75] text-[10px] font-medium text-white">
+            {pm?.avatar_initials ?? "PM"}
           </div>
-          <div>
-            <p className="text-[11px] text-white/70">{loggedPm?.name ?? "Project Manager"}</p>
-            <p className="text-[10px] text-white/35">Project Manager</p>
+          <div className="min-w-0">
+            <p className="truncate text-[11px] text-white/60 leading-tight">{pm?.name ?? "Project Manager"}</p>
+            <p className="text-[10px] text-white/30 leading-tight mt-[1px]">Project Manager</p>
           </div>
         </div>
       </aside>
 
+      {/* MAIN */}
       <main className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-[50px] items-center justify-between border-b border-zinc-200 bg-white px-5">
+
+        {/* TOPBAR */}
+        <header className="flex h-[50px] shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-5">
           <div>
-            <h1 className="text-sm font-medium text-[#18181B]">Kampanjöversikt</h1>
-            <p className="text-[11px] text-zinc-500">{formatTopbarDate(today)}</p>
+            <p className="text-[14px] font-medium text-[#18181B] leading-tight">Kampanjöversikt</p>
+            <p className="text-[11px] text-zinc-400 leading-tight mt-[1px]">{dateLabel}</p>
           </div>
-          <div className="flex items-center gap-1.5">
-            <button className="cursor-pointer rounded-md border border-[#1D9E75] bg-[rgba(29,158,117,0.07)] px-2.5 py-1 text-[11px] text-[#1D9E75]">
-              Alla
-            </button>
-            <button className="cursor-pointer rounded-md border border-zinc-200 bg-[#F4F4F5] px-2.5 py-1 text-[11px] text-zinc-500">
-              Aktiva
-            </button>
-            <button className="cursor-pointer rounded-md border border-zinc-200 bg-[#F4F4F5] px-2.5 py-1 text-[11px] text-zinc-500">
-              ⚠ Kräver åtgärd
-            </button>
+          <div className="flex gap-[6px]">
+            {["Alla","Aktiva","⚠ Kräver åtgärd"].map((label, i) => (
+              <button key={label} className={`rounded-[6px] px-[10px] py-[5px] text-[11px] border leading-tight cursor-pointer ${i === 0 ? "border-[#1D9E75] bg-[rgba(29,158,117,0.07)] text-[#1D9E75]" : "border-zinc-200 bg-[#F4F4F5] text-zinc-500"}`}>
+                {label}
+              </button>
+            ))}
           </div>
         </header>
 
-        <section className="bg-[#F4F4F5] px-5 py-2">
-          <div className="overflow-x-auto">
-            <div className="flex min-w-[820px] divide-x divide-zinc-200 rounded-md border border-zinc-200 bg-white">
-              <div className="w-1/4 px-3 py-2">
-                <p className="text-[10px] tracking-[0.3px] text-zinc-500 uppercase">Aktiva kampanjer</p>
-                <p className="text-[20px] leading-5 font-medium text-[#18181B]">{campaigns.length}</p>
-                <p className="text-[10px] text-zinc-500">
-                  {activeCampaigns} aktiva · {pausedCampaigns} pausade · {closingCampaigns} avslutar
-                </p>
-              </div>
-              <div className="w-1/4 px-3 py-2">
-                <p className="text-[10px] tracking-[0.3px] text-zinc-500 uppercase">Möten bokat i veckan</p>
-                <p className="text-[20px] leading-5 font-medium text-[#18181B]">{totalMeetingsThisWeek}</p>
-                <p className="text-[10px] text-zinc-500">
-                  <span className={meetingDelta >= 0 ? "text-[#1D9E75]" : "text-[#E24B4A]"}>
-                    {meetingDelta >= 0 ? "+" : ""}
-                    {meetingDelta} vs förra veckan
-                  </span>
-                </p>
-              </div>
-              <div className="w-1/4 px-3 py-2">
-                <p className="text-[10px] tracking-[0.3px] text-zinc-500 uppercase">Rapporter att skicka</p>
-                <p className="text-[20px] leading-5 font-medium text-[#EF9F27]">{reportsToSend}</p>
-                <p className="text-[10px] text-zinc-500">Deadline: tisdag EOD</p>
-              </div>
-              <div className="w-1/4 px-3 py-2">
-                <p className="text-[10px] tracking-[0.3px] text-zinc-500 uppercase">Snitt hälsopoäng</p>
-                <p className="text-[20px] leading-5 font-medium text-[#18181B]">{averageHealth}</p>
-                <p className="text-[10px] text-zinc-500">{redCampaigns} kampanjer i rött</p>
-              </div>
+        {/* STATS ROW — 4 separate white cards */}
+        <div className="grid shrink-0 grid-cols-4 gap-[10px] px-5 py-[14px]">
+          {[
+            {
+              label: "Aktiva kampanjer",
+              val: campaigns.length,
+              sub: `${activeCount} aktiva · ${pausedCount} pausar · ${closingCount} avslutar`,
+              subCls: "text-zinc-500",
+            },
+            {
+              label: "Möten bokat i veckan",
+              val: totalThis,
+              sub: `${delta >= 0 ? "+" : ""}${delta} vs förra veckan`,
+              subCls: delta >= 0 ? "text-[#1D9E75]" : "text-[#E24B4A]",
+            },
+            {
+              label: "Rapporter att skicka",
+              val: reportsCount,
+              sub: "Deadline: tisdag EOD",
+              subCls: "text-zinc-500",
+              valCls: "text-[#EF9F27]",
+            },
+            {
+              label: "Snitt hälsopoäng",
+              val: avgHealth,
+              sub: `${redCount} kampanjer i rött`,
+              subCls: "text-zinc-500",
+            },
+          ].map(({ label, val, sub, subCls, valCls }) => (
+            <div key={label} className="rounded-[8px] border border-zinc-200 bg-white px-[14px] py-[10px]">
+              <p className="text-[10px] uppercase tracking-[0.4px] text-zinc-500 leading-tight">{label}</p>
+              <p className={`mt-1 text-[20px] font-medium leading-tight ${valCls ?? "text-[#18181B]"}`}>{val}</p>
+              <p className={`mt-[3px] text-[10px] leading-tight ${subCls}`}>{sub}</p>
             </div>
-          </div>
-        </section>
+          ))}
+        </div>
 
-        <section className="flex-1 overflow-y-auto px-5 pb-3">
-          <h2 className="mb-2 pt-0.5 text-[11px] font-medium tracking-[0.5px] text-zinc-500 uppercase">
-            Aktiva kampanjer
-          </h2>
-          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {campaignCards.map(({ campaign, meetingsThisWeek }, index) => {
-              const target = campaign.weekly_meeting_target;
-              const progressPct = target > 0
-                ? Math.min(100, Math.round((meetingsThisWeek / target) * 100))
+        {/* CAMPAIGN GRID */}
+        <div className="flex-1 overflow-y-auto px-5 pb-5">
+          <p className="mb-[10px] text-[11px] font-medium uppercase tracking-[0.5px] text-zinc-500">Aktiva kampanjer</p>
+          <div className="grid grid-cols-3 gap-[10px] max-lg:grid-cols-2">
+            {cards.map(({ c, thisWeek }) => {
+              const weekPct = c.weekly_meeting_target > 0 ? Math.min(100, Math.round((thisWeek / c.weekly_meeting_target) * 100)) : 0;
+              const mtdPct = c.monthly_meeting_target > 0
+                ? Math.min(100, Math.round((c.meetings_booked_mtd / c.monthly_meeting_target) * 100))
                 : 0;
-              const healthLevel = getHealthLevel(campaign.health_score);
-              const marketLabel = campaign.market.replaceAll("/", " · ");
-              const reportDays = Math.max(1, reportDaysLeft) + (index % 2);
-
+              const hl = healthLevel(c.health_score);
+              const warningCount = hl === "red" ? 4 : 2;
+              const daysLeft = daysToTuesday(today);
+              const reportText = daysLeft === 0 ? "idag" : `${daysLeft} ${daysLeft === 1 ? "dag" : "dagar"}`;
               return (
-                <Link
-                  key={campaign.campaign_id}
-                  href={`/dashboard/${campaign.campaign_id}`}
-                  className="block h-[160px] rounded-[8px] border border-zinc-200 bg-white p-2.5 transition hover:border-zinc-400"
-                >
-                  <div className="mb-1 flex items-start justify-between gap-2">
+                <Link key={c.campaign_id} href={`/dashboard/${c.campaign_id}`}
+                  className="block cursor-pointer rounded-[10px] border border-zinc-200 bg-white p-[14px] transition hover:border-zinc-400 hover:shadow-sm">
+
+                  {/* ROW 1: name + health dot */}
+                  <div className="flex items-start justify-between mb-[10px]">
                     <div>
-                      <p className="text-[13px] leading-4 font-bold text-[#18181B]">{campaign.client_name}</p>
-                      <p className="text-[10px] text-zinc-500">{marketLabel}</p>
+                      <p className="text-[13px] font-medium text-[#18181B] leading-tight">{c.client_name}</p>
+                      <p className="text-[10px] text-zinc-400 leading-tight mt-[2px]">{c.market.replace(/\//g, " · ")}</p>
+                    </div>
+                    <span className={`mt-[3px] h-2 w-2 shrink-0 rounded-full ${healthCls(hl)}`} />
+                  </div>
+
+                  {/* ROW 2: channels */}
+                  <div className="flex items-center gap-[4px] mb-[10px]">
+                    {c.channels_enabled.map((ch) => {
+                      const { label, cls } = CHANNEL_LABELS[ch] ?? { label: ch, cls: "bg-zinc-100 text-zinc-500" };
+                      return <span key={ch} className={`shrink-0 rounded-[4px] px-[6px] py-[2px] text-[9px] font-medium leading-tight ${cls}`}>{label}</span>;
+                    })}
+                  </div>
+
+                  {/* ROW 3: metric boxes */}
+                  <div className="grid grid-cols-2 gap-[6px] mb-[10px]">
+                    <div className="rounded-[6px] bg-[#F4F4F5] px-[9px] py-[7px]">
+                      <p className="text-[9px] text-zinc-500 leading-tight mb-[2px]">Möten veckan</p>
+                      <p className="text-[14px] font-medium text-[#18181B] leading-tight">{thisWeek}</p>
+                      <p className="text-[9px] text-zinc-500 leading-tight mt-[1px]">mål: {c.weekly_meeting_target}</p>
+                      <div className="mt-[4px] h-[3px] w-full rounded-full bg-zinc-200">
+                        <div className={`h-full rounded-full ${barCls(weekPct)}`} style={{ width: `${weekPct}%` }} />
+                      </div>
+                    </div>
+
+                    <div className="rounded-[6px] bg-[#F4F4F5] px-[9px] py-[7px]">
+                      <p className="text-[9px] text-zinc-500 leading-tight mb-[2px]">MTD-möten</p>
+                      <p className="text-[14px] font-medium text-[#18181B] leading-tight">{c.meetings_booked_mtd}</p>
+                      <p className="text-[9px] text-zinc-500 leading-tight mt-[1px]">mål: {c.monthly_meeting_target}</p>
+                      <div className="mt-[4px] h-[3px] w-full rounded-full bg-zinc-200">
+                        <div className={`h-full rounded-full ${barCls(mtdPct)}`} style={{ width: `${mtdPct}%` }} />
+                      </div>
                     </div>
                   </div>
 
-                  <div className="mb-2 flex items-center gap-1.5">
-                    <span
-                      className={`inline-block h-2 w-2 rounded-full ${healthDotClass(healthLevel)}`}
-                      aria-label={`Hälsoindikator ${healthLevel}`}
-                    />
-                    {campaign.channels_enabled.map((channel) => {
-                      const label = CHANNEL_LABELS[channel] ?? channel;
-                      let channelClasses = "bg-zinc-100 text-zinc-700";
-
-                      if (channel === "phone") {
-                        channelClasses = "bg-[rgba(127,119,221,0.12)] text-[#534AB7]";
-                      }
-                      if (channel === "email") {
-                        channelClasses = "bg-[rgba(29,158,117,0.12)] text-[#0F6E56]";
-                      }
-                      if (channel === "linkedin") {
-                        channelClasses = "bg-[rgba(55,138,221,0.12)] text-[#185FA5]";
-                      }
-
-                      return (
-                        <span
-                          key={`${campaign.campaign_id}-${channel}`}
-                          className={`rounded px-1.5 py-0.5 text-[9px] leading-3 font-medium ${channelClasses}`}
-                        >
-                          {label}
-                        </span>
-                      );
-                    })}
-                    <Badge className={`ml-auto ${statusClass(campaign.status)}`}>{STATUS_LABELS[campaign.status]}</Badge>
-                  </div>
-
-                  <div className="mb-1.5">
-                    <p className="text-[11px] text-zinc-700">
-                      Möten <span className="font-semibold">{meetingsThisWeek}/{target}</span>
-                    </p>
-                    <Progress value={progressPct} indicatorClassName={progressIndicatorClass(progressPct)} className="mt-0.5 h-[3px]" />
-                  </div>
-
-                  <div className="flex items-center justify-between border-t border-zinc-100 pt-1 text-[10px]">
+                  {/* ROW 4: footer */}
+                  <div className="flex items-center justify-between border-t border-[#F4F4F5] pt-[9px]">
                     <p className="text-[10px] text-zinc-500">
-                      Rapport om <span className="font-medium text-[#EF9F27]">{reportDays} dagar</span>
+                      Rapport om <span className={`font-medium ${daysLeft === 0 ? "text-[#E24B4A]" : "text-[#EF9F27]"}`}>{reportText}</span>
                     </p>
-                    <p className="text-zinc-500">Hälsoindex {campaign.health_score}</p>
+                    {hl === "green" ? (
+                      <span className={`shrink-0 rounded-[10px] px-[7px] py-[2px] text-[9px] font-medium leading-tight ${STATUS_CLS[c.status]}`}>
+                        {STATUS_LABELS[c.status]}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 rounded-[10px] bg-[rgba(226,75,74,0.1)] px-[7px] py-[2px] text-[9px] font-medium leading-tight text-[#A32D2D]">
+                        {warningCount} varningar
+                      </span>
+                    )}
                   </div>
                 </Link>
               );
             })}
           </div>
-        </section>
+        </div>
       </main>
     </div>
   );
