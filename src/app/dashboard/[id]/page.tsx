@@ -62,7 +62,8 @@ function fmtShort(d: Date): string {
 }
 
 function daysToTuesday(date: Date): number {
-  return (2 - date.getDay() + 7) % 7;
+  const raw = (2 - date.getDay() + 7) % 7;
+  return raw === 0 ? 7 : raw;
 }
 
 interface PageProps {
