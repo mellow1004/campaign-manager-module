@@ -61,7 +61,18 @@ function daysToTuesday(date: Date): number {
   return raw === 0 ? 7 : raw;
 }
 
-export default async function DashboardPage() {
+type FilterType = "alla" | "aktiva" | "atgard";
+
+interface PageProps {
+  searchParams?: Promise<{ filter?: string }>;
+}
+
+export default async function DashboardPage({ searchParams }: PageProps) {
+  const sp = searchParams ? await searchParams : undefined;
+  const activeFilter: FilterType =
+    sp?.filter === "aktiva" ? "aktiva" :
+    sp?.filter === "atgard" ? "atgard" : "alla";
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const weekStart = getWeekStart(today);
@@ -91,22 +102,33 @@ export default async function DashboardPage() {
           where: { date: { gte: prevWeekStart, lte: today } },
           select: { date: true, meetings_booked: true },
         },
+        tasks: {
+          where: { status: { in: ["open", "in_progress"] }, due_date: { lt: today } },
+          select: { task_id: true, priority: true },
+        },
       },
       orderBy: { client_name: "asc" },
     }),
     prisma.user.findFirst({ where: { role: "pm" }, select: { name: true, avatar_initials: true } }),
   ]);
 
-  const cards = campaigns.map((c) => {
+  const allCards = campaigns.map((c) => {
     const thisWeek = c.activity_logs
       .filter((l) => l.date >= weekStart)
       .reduce((s, l) => s + l.meetings_booked, 0);
-    // Only count the same days into last week for a fair comparison
     const lastWeek = c.activity_logs
       .filter((l) => l.date >= prevWeekStart && l.date <= samePointLastWeek)
       .reduce((s, l) => s + l.meetings_booked, 0);
-    return { c, thisWeek, lastWeek };
+    const overdueHighPrio = c.tasks.filter((t) => t.priority === "high").length;
+    const needsAction = c.health_score < 75 || overdueHighPrio > 0;
+    return { c, thisWeek, lastWeek, overdueHighPrio, needsAction };
   });
+
+  const cards = activeFilter === "aktiva"
+    ? allCards.filter((x) => x.c.status === "active")
+    : activeFilter === "atgard"
+    ? allCards.filter((x) => x.needsAction)
+    : allCards;
 
   const totalThis  = cards.reduce((s, x) => s + x.thisWeek, 0);
   const totalLast  = cards.reduce((s, x) => s + x.lastWeek, 0);
@@ -168,11 +190,26 @@ export default async function DashboardPage() {
             <p className="text-[11px] text-zinc-400 leading-tight mt-[1px]">{dateLabel}</p>
           </div>
           <div className="flex gap-[6px]">
-            {["Alla","Aktiva","⚠ Kräver åtgärd"].map((label, i) => (
-              <button key={label} className={`rounded-[6px] px-[10px] py-[5px] text-[11px] border leading-tight cursor-pointer ${i === 0 ? "border-[#1D9E75] bg-[rgba(29,158,117,0.07)] text-[#1D9E75]" : "border-zinc-200 bg-[#F4F4F5] text-zinc-500"}`}>
-                {label}
-              </button>
-            ))}
+            {([
+              { label: "Alla",           filter: "alla",   count: allCards.length },
+              { label: "Aktiva",         filter: "aktiva", count: allCards.filter(x => x.c.status === "active").length },
+              { label: "⚠ Kräver åtgärd", filter: "atgard", count: allCards.filter(x => x.needsAction).length },
+            ] as const).map(({ label, filter, count }) => {
+              const isActive = activeFilter === filter;
+              return (
+                <Link key={filter} href={filter === "alla" ? "/dashboard" : `/dashboard?filter=${filter}`}
+                  className={`rounded-[6px] px-[10px] py-[5px] text-[11px] border leading-tight ${
+                    isActive
+                      ? "border-[#1D9E75] bg-[rgba(29,158,117,0.07)] text-[#1D9E75]"
+                      : "border-zinc-200 bg-[#F4F4F5] text-zinc-500 hover:border-zinc-300"
+                  }`}>
+                  {label}
+                  {count !== allCards.length && (
+                    <span className="ml-1 text-[10px] opacity-70">({count})</span>
+                  )}
+                </Link>
+              );
+            })}
           </div>
         </header>
 
