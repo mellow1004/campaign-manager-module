@@ -185,19 +185,19 @@ async function main() {
     if (cs.status === "active" || cs.status === "closing") {
       await prisma.iCP.create({
         data: {
-          campaign_id: campaign.campaign_id,
-          version: 1,
-          status: IcpStatus.active,
+          campaign:           { connect: { campaign_id: campaign.campaign_id } },
+          version:            1,
+          status:             IcpStatus.active,
           industry_verticals: ["SaaS", "Enterprise Software", "IT Services"].slice(0, 2 + (i % 2)),
-          company_sizes: ["201-500", "501-1000", "1001-5000"],
-          geographies: cs.market.split("/").filter((m) => m !== "EN" && m !== "SV" && m !== "FR"),
-          job_titles: ["IT Director", "CTO", "VP of Engineering", "Head of IT"].slice(0, 2 + (i % 3)),
-          pain_points: ["Ineffektiva processer", "Skalbarhetsproblem", "Kostnadsoptimering"].slice(0, 2 + (i % 2)),
-          key_messages: ["ROI inom 6 månader", "Smidig onboarding", "Enterprise-grade support"],
-          exclusion_domains: i % 3 === 0 ? ["competitor.com", "rival.se"] : [],
-          current_focus: `v.${isoWeek(new Date())} – Fokus på ${["C-suite", "IT-direktörer", "Tekniska beslutsfattare"][i % 3]}`,
+          company_sizes:      ["201-500", "501-1000", "1001-5000"],
+          geographies:        cs.market.split("/").filter((m) => m !== "EN" && m !== "SV" && m !== "FR"),
+          job_titles:         ["IT Director", "CTO", "VP of Engineering", "Head of IT"].slice(0, 2 + (i % 3)),
+          pain_points:        ["Ineffektiva processer", "Skalbarhetsproblem", "Kostnadsoptimering"].slice(0, 2 + (i % 2)),
+          key_messages:       ["ROI inom 6 månader", "Smidig onboarding", "Enterprise-grade support"],
+          exclusion_domains:  i % 3 === 0 ? ["competitor.com", "rival.se"] : [],
+          current_focus:      `v.${isoWeek(new Date())} – Fokus på ${["C-suite", "IT-direktörer", "Tekniska beslutsfattare"][i % 3]}`,
           estimated_pool_size: 800 + i * 150,
-          approved_by_id: tl.user_id,
+          approved_by:        { connect: { user_id: tl.user_id } },
         },
       });
     }
@@ -228,16 +228,16 @@ async function main() {
       for (const t of taskDefs) {
         await prisma.task.create({
           data: {
-            campaign_id: campaign.campaign_id,
-            title: t.title,
-            description: null,
-            due_date: daysAgo(-t.dueOffset),
-            priority: t.priority,
-            status: t.status,
-            assigned_to_id: pmId,
-            created_by_id: pmId,
-            task_type: "manual",
-            recurrence: "none",
+            campaign:    { connect: { campaign_id: campaign.campaign_id } },
+            title:       t.title,
+            description: "",
+            due_date:    daysAgo(-t.dueOffset),
+            priority:    t.priority,
+            status:      t.status,
+            assigned_to: { connect: { user_id: pmId } },
+            created_by:  { connect: { user_id: pmId } },
+            task_type:   "manual",
+            recurrence:  "none",
             completed_at: t.status === "done" ? daysAgo(Math.abs(t.dueOffset) + 1) : null,
           },
         });
@@ -246,44 +246,38 @@ async function main() {
 
     // ── Checklist instances ──
     if (cs.status === "onboarding") {
-      // Startup checklist — partially completed
       const pct = 40 + (i % 3) * 10;
-      const items = makeChecklistItems(STARTUP_ITEMS, pct);
       await prisma.checklistInstance.create({
         data: {
-          template_id: startupTpl.template_id,
-          campaign_id: campaign.campaign_id,
-          week_number: null,
-          year: null,
-          items,
+          template:       { connect: { template_id: startupTpl.template_id } },
+          campaign:       { connect: { campaign_id: campaign.campaign_id } },
+          week_number:    null,
+          year:           null,
+          items:          makeChecklistItems(STARTUP_ITEMS, pct),
           completion_pct: pct,
         },
       });
     } else if (cs.status === "closing") {
-      // Closedown checklist — partially done
-      const pct = 50;
       await prisma.checklistInstance.create({
         data: {
-          template_id: closedownTpl.template_id,
-          campaign_id: campaign.campaign_id,
-          items: makeChecklistItems(CLOSEDOWN_ITEMS, pct),
-          completion_pct: pct,
+          template:       { connect: { template_id: closedownTpl.template_id } },
+          campaign:       { connect: { campaign_id: campaign.campaign_id } },
+          items:          makeChecklistItems(CLOSEDOWN_ITEMS, 50),
+          completion_pct: 50,
         },
       });
     } else if (cs.status === "active") {
-      // Last 3 weekly checklists
-      const today = new Date(); today.setHours(0,0,0,0);
       for (let w = 0; w < 3; w++) {
         const weekDate = daysAgo(w * 7);
         const wk = isoWeek(weekDate);
-        const pct = w === 0 ? 60 : w === 1 ? 100 : 100;
+        const pct = w === 0 ? 60 : 100;
         await prisma.checklistInstance.create({
           data: {
-            template_id: weeklyTpl.template_id,
-            campaign_id: campaign.campaign_id,
-            week_number: wk,
-            year: weekDate.getFullYear(),
-            items: makeChecklistItems(WEEKLY_ITEMS, pct),
+            template:       { connect: { template_id: weeklyTpl.template_id } },
+            campaign:       { connect: { campaign_id: campaign.campaign_id } },
+            week_number:    wk,
+            year:           weekDate.getFullYear(),
+            items:          makeChecklistItems(WEEKLY_ITEMS, pct),
             completion_pct: pct,
           },
         });
@@ -294,33 +288,30 @@ async function main() {
     if (cs.status === "active" || cs.status === "closing") {
       for (let w = 1; w <= 4; w++) {
         const reportDate = daysAgo(w * 7);
-        const wk = isoWeek(reportDate);
-        const isSent = w > 1 || cs.healthScore > 60;
+        const wk        = isoWeek(reportDate);
+        const isSent    = w > 1 || cs.healthScore > 60;
         const meetingsW = Math.round(cs.weeklyMeetingTarget * (0.5 + cs.healthScore / 200));
-        const sentAt = isSent ? daysAgo(w * 7 - 1) : null; // Sent on Monday
         await prisma.weeklyReport.create({
           data: {
-            campaign_id: campaign.campaign_id,
-            week_number: wk,
-            year: reportDate.getFullYear(),
-            status: isSent ? "sent" : "draft",
-            meetings_week: meetingsW,
-            meetings_mtd: cs.meetingsBookedMtd,
+            campaign:       { connect: { campaign_id: campaign.campaign_id } },
+            week_number:    wk,
+            year:           reportDate.getFullYear(),
+            status:         isSent ? "sent" : "draft",
+            meetings_week:  meetingsW,
+            meetings_mtd:   cs.meetingsBookedMtd,
             meetings_total: cs.meetingsBookedMtd + w * 2,
             activity_summary: {
-              dials: 180 + i * 10,
-              connects: 28 + i * 2,
-              emails_sent: 120 + i * 8,
-              replies: 9 + i,
-              linkedin_requests: 55 + i * 3,
-              linkedin_accepted: 21 + i,
+              dials: 180 + i * 10, connects: 28 + i * 2,
+              emails_sent: 120 + i * 8, replies: 9 + i,
+              linkedin_requests: 55 + i * 3, linkedin_accepted: 21 + i,
             },
-            ai_commentary: `Kampanjen visade ${cs.healthScore > 75 ? "stark" : "stabil"} aktivitet under vecka ${wk}. ${meetingsW >= cs.weeklyMeetingTarget ? "Veckans mötesmål uppnåddes" : `${meetingsW} av ${cs.weeklyMeetingTarget} möten bokades`}. Fokus nästa vecka: stärka pipeline inom ${["C-suite", "IT-direktörer", "tekniska beslutsfattare"][i % 3]}.`,
-            pm_commentary: isSent ? "Bra vecka sammantaget. Fortsätter med befintlig strategi." : "",
+            ai_commentary:   `Kampanjen visade ${cs.healthScore > 75 ? "stark" : "stabil"} aktivitet under vecka ${wk}. ${meetingsW >= cs.weeklyMeetingTarget ? "Veckans mötesmål uppnåddes" : `${meetingsW} av ${cs.weeklyMeetingTarget} möten bokades`}. Fokus nästa vecka: stärka pipeline inom ${["C-suite", "IT-direktörer", "tekniska beslutsfattare"][i % 3]}.`,
+            pm_commentary:   isSent ? "Bra vecka sammantaget. Fortsätter med befintlig strategi." : "",
             next_week_focus: `Öka dial-volym och följa upp ${w === 1 ? "varma" : "nya"} kontakter.`,
-            recipients: ["kontakt@" + cs.clientName.toLowerCase().replace(/ /g, "") + ".com"],
-            sent_at: sentAt,
-            sent_by_id: isSent ? pmId : null,
+            recipients:      ["kontakt@" + cs.clientName.toLowerCase().replace(/ /g, "") + ".com"],
+            sent_at:         isSent ? daysAgo(w * 7 - 1) : null,
+            // sent_by_id is required (String, not String?) — always link to PM
+            sent_by:         { connect: { user_id: pmId } },
           },
         });
       }
