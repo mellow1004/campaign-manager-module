@@ -1,0 +1,216 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum CampaignStatus {
+  onboarding
+  active
+  paused
+  closing
+  closed
+}
+
+enum IcpStatus {
+  draft
+  approved
+  active
+}
+
+enum WeeklyReportStatus {
+  draft
+  sent
+}
+
+enum TaskPriority {
+  high
+  medium
+  low
+}
+
+enum TaskStatus {
+  open
+  in_progress
+  done
+}
+
+enum TaskType {
+  manual
+  checklist_item
+  auto_generated
+}
+
+enum TaskRecurrence {
+  none
+  daily
+  weekly
+  monthly
+}
+
+enum ChecklistType {
+  startup
+  weekly
+  closedown
+}
+
+enum UserRole {
+  pm
+  tl
+  admin
+}
+
+model Campaign {
+  campaign_id             String         @id @default(uuid())
+  client_name             String
+  client_logo_url         String?
+  start_date              DateTime       @db.Date
+  end_date                DateTime       @db.Date
+  status                  CampaignStatus
+  market                  String
+  language                String
+  channels_enabled        String[]
+  assigned_pm_id          String
+  assigned_tl_id          String
+  health_score            Int
+  weekly_meeting_target   Int
+  monthly_meeting_target  Int
+  meetings_booked_mtd     Int
+  contract_type           String
+  created_at              DateTime       @default(now())
+  updated_at              DateTime       @updatedAt
+
+  assigned_pm             User           @relation("CampaignAssignedPM", fields: [assigned_pm_id], references: [user_id])
+  assigned_tl             User           @relation("CampaignAssignedTL", fields: [assigned_tl_id], references: [user_id])
+  activity_logs           ActivityLog[]
+  icps                    ICP[]
+  weekly_reports          WeeklyReport[]
+  tasks                   Task[]
+  checklist_instances     ChecklistInstance[]
+}
+
+model ActivityLog {
+  log_id                String    @id @default(uuid())
+  campaign_id           String
+  date                  DateTime  @db.Date
+  dials                 Int
+  connects              Int
+  emails_sent           Int
+  replies               Int
+  linkedin_requests     Int
+  linkedin_accepted     Int
+  meetings_booked       Int
+  logged_by_id          String
+  created_at            DateTime  @default(now())
+
+  campaign              Campaign  @relation(fields: [campaign_id], references: [campaign_id])
+  logged_by             User      @relation("ActivityLoggedBy", fields: [logged_by_id], references: [user_id])
+}
+
+model ICP {
+  icp_id                String    @id @default(uuid())
+  campaign_id           String
+  version               Int
+  status                IcpStatus
+  industry_verticals    String[]
+  company_sizes         String[]
+  geographies           String[]
+  job_titles            String[]
+  pain_points           String[]
+  key_messages          String[]
+  exclusion_domains     String[]
+  current_focus         String
+  estimated_pool_size   Int
+  approved_by_id        String
+  created_at            DateTime  @default(now())
+
+  campaign              Campaign  @relation(fields: [campaign_id], references: [campaign_id])
+  approved_by           User      @relation("ICPApprovedBy", fields: [approved_by_id], references: [user_id])
+}
+
+model WeeklyReport {
+  report_id             String             @id @default(uuid())
+  campaign_id           String
+  week_number           Int
+  year                  Int
+  status                WeeklyReportStatus
+  meetings_week         Int
+  meetings_mtd          Int
+  meetings_total        Int
+  activity_summary      Json
+  ai_commentary         String
+  pm_commentary         String
+  next_week_focus       String
+  recipients            String[]
+  sent_at               DateTime?
+  sent_by_id            String
+
+  campaign              Campaign           @relation(fields: [campaign_id], references: [campaign_id])
+  sent_by               User               @relation("WeeklyReportSentBy", fields: [sent_by_id], references: [user_id])
+}
+
+model Task {
+  task_id               String           @id @default(uuid())
+  campaign_id           String?
+  title                 String
+  description           String
+  due_date              DateTime         @db.Date
+  priority              TaskPriority
+  status                TaskStatus
+  assigned_to_id        String
+  created_by_id         String
+  task_type             TaskType
+  recurrence            TaskRecurrence
+  completed_at          DateTime?
+  created_at            DateTime         @default(now())
+
+  campaign              Campaign?        @relation(fields: [campaign_id], references: [campaign_id])
+  assigned_to           User             @relation("TaskAssignedTo", fields: [assigned_to_id], references: [user_id])
+  created_by            User             @relation("TaskCreatedBy", fields: [created_by_id], references: [user_id])
+}
+
+model ChecklistTemplate {
+  template_id           String            @id @default(uuid())
+  type                  ChecklistType
+  name                  String
+  items                 Json
+  version               Int
+  created_at            DateTime          @default(now())
+
+  checklist_instances   ChecklistInstance[]
+}
+
+model ChecklistInstance {
+  instance_id           String             @id @default(uuid())
+  template_id           String
+  campaign_id           String
+  week_number           Int?
+  year                  Int?
+  items                 Json
+  completion_pct        Int
+  created_at            DateTime           @default(now())
+
+  template              ChecklistTemplate  @relation(fields: [template_id], references: [template_id])
+  campaign              Campaign           @relation(fields: [campaign_id], references: [campaign_id])
+}
+
+model User {
+  user_id               String       @id @default(uuid())
+  email                 String       @unique
+  name                  String
+  role                  UserRole
+  avatar_initials       String
+  supabase_auth_id      String       @unique
+  created_at            DateTime     @default(now())
+
+  campaigns_as_pm       Campaign[]   @relation("CampaignAssignedPM")
+  campaigns_as_tl       Campaign[]   @relation("CampaignAssignedTL")
+  activity_logs         ActivityLog[] @relation("ActivityLoggedBy")
+  approved_icps         ICP[]        @relation("ICPApprovedBy")
+  sent_reports          WeeklyReport[] @relation("WeeklyReportSentBy")
+  assigned_tasks        Task[]       @relation("TaskAssignedTo")
+  created_tasks         Task[]       @relation("TaskCreatedBy")
+}
