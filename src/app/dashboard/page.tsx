@@ -55,7 +55,10 @@ function barCls(pct: number) {
 
 function daysToTuesday(date: Date): number {
   const d = date.getDay();
-  return (2 - d + 7) % 7;
+  // If today is Tuesday (d===2) return 7 so it says "7 dagar" (next week's deadline),
+  // not 0 (which made it look like every single report was due "today")
+  const raw = (2 - d + 7) % 7;
+  return raw === 0 ? 7 : raw;
 }
 
 export default async function DashboardPage() {
@@ -64,6 +67,13 @@ export default async function DashboardPage() {
   const weekStart = getWeekStart(today);
   const prevWeekStart = new Date(weekStart);
   prevWeekStart.setDate(prevWeekStart.getDate() - 7);
+
+  // How many days into the current week are we? (Mon=0, Tue=1, …)
+  const dayOfWeek = today.getDay();
+  const daysIntoWeek = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  // Cutoff for "same point last week" — gives a fair day-for-day comparison
+  const samePointLastWeek = new Date(prevWeekStart);
+  samePointLastWeek.setDate(samePointLastWeek.getDate() + daysIntoWeek);
 
   const [campaigns, pm] = await Promise.all([
     prisma.campaign.findMany({
@@ -88,8 +98,13 @@ export default async function DashboardPage() {
   ]);
 
   const cards = campaigns.map((c) => {
-    const thisWeek = c.activity_logs.filter((l) => l.date >= weekStart).reduce((s, l) => s + l.meetings_booked, 0);
-    const lastWeek = c.activity_logs.filter((l) => l.date < weekStart).reduce((s, l) => s + l.meetings_booked, 0);
+    const thisWeek = c.activity_logs
+      .filter((l) => l.date >= weekStart)
+      .reduce((s, l) => s + l.meetings_booked, 0);
+    // Only count the same days into last week for a fair comparison
+    const lastWeek = c.activity_logs
+      .filter((l) => l.date >= prevWeekStart && l.date <= samePointLastWeek)
+      .reduce((s, l) => s + l.meetings_booked, 0);
     return { c, thisWeek, lastWeek };
   });
 
@@ -173,8 +188,12 @@ export default async function DashboardPage() {
             {
               label: "Möten bokat i veckan",
               val: totalThis,
-              sub: `${delta >= 0 ? "+" : ""}${delta} vs förra veckan`,
-              subCls: delta >= 0 ? "text-[#1D9E75]" : "text-[#E24B4A]",
+              sub: totalLast === 0
+                ? "ingen data förra veckan"
+                : `${delta >= 0 ? "+" : ""}${delta} vs förra veckan`,
+              subCls: totalLast === 0
+                ? "text-zinc-400"
+                : delta >= 0 ? "text-[#1D9E75]" : "text-[#E24B4A]",
             },
             {
               label: "Rapporter att skicka",
