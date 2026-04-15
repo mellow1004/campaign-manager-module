@@ -163,8 +163,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       {/* SIDEBAR — match 01-dashboard.html */}
       <aside className="flex w-[200px] min-w-[200px] shrink-0 flex-col bg-[#18181B]">
         <div className="border-b border-white/[0.07] px-4 pb-3 pt-[18px]">
-          <p className="text-[15px] font-medium leading-tight text-white">Otto</p>
-          <p className="mt-[1px] text-[10px] leading-tight text-white/35">CoSeller Suite</p>
+          <p className="text-[11px] font-medium leading-tight text-white">Project Management -</p>
+          <p className="mt-[1px] text-[10px] leading-tight text-white/35">Outbound</p>
         </div>
         <nav className="flex-1 space-y-[2px] px-2 py-[12px]">
           {[
