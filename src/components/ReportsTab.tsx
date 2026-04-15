@@ -40,11 +40,18 @@ interface Props {
   meetingsWeek: number;
   meetingsMtd: number;
   currentFocus: string;
+  pace: "on_track" | "behind" | "ahead";
 }
 
 function fmtShort(d: string) {
   return new Date(d).toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
 }
+
+const PACE_LABELS: Record<"on_track" | "behind" | "ahead", { label: string; cls: string }> = {
+  on_track: { label: "På spår",  cls: "bg-[rgba(29,158,117,0.1)] text-[#0F6E56]" },
+  behind:   { label: "Bakom",    cls: "bg-[rgba(226,75,74,0.1)] text-[#A32D2D]" },
+  ahead:    { label: "Före",     cls: "bg-[rgba(55,138,221,0.1)] text-[#185FA5]" },
+};
 
 export default function ReportsTab({
   reports: initialReports,
@@ -60,6 +67,7 @@ export default function ReportsTab({
   meetingsWeek,
   meetingsMtd,
   currentFocus,
+  pace,
 }: Props) {
   const router = useRouter();
   const [reports, setReports] = useState<WeeklyReport[]>(initialReports);
@@ -156,9 +164,14 @@ export default function ReportsTab({
             <p className="text-[12px] font-medium text-zinc-700">
               Veckorapport v.{currentWeekNumber} {currentYear}
             </p>
-            <span className="rounded-[4px] bg-amber-100 px-[6px] py-[1px] text-[10px] text-amber-700 font-medium">
-              Utkast
-            </span>
+            <div className="flex items-center gap-2">
+              <span className={`rounded-[4px] px-[6px] py-[1px] text-[10px] font-medium ${PACE_LABELS[pace].cls}`}>
+                {PACE_LABELS[pace].label}
+              </span>
+              <span className="rounded-[4px] bg-amber-100 px-[6px] py-[1px] text-[10px] text-amber-700 font-medium">
+                Utkast
+              </span>
+            </div>
           </div>
 
           <div className="p-4 space-y-4">

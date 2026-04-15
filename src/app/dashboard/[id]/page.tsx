@@ -6,6 +6,7 @@ import TasksTab from "@/components/TasksTab";
 import ChecklistsTab from "@/components/ChecklistsTab";
 import ActivityLogForm from "@/components/ActivityLogForm";
 import ReportsTab from "@/components/ReportsTab";
+import ActivityChart from "@/components/ActivityChart";
 
 type TabId = "oversikt" | "aktivitet" | "icp" | "tasks" | "checklistor" | "rapporter";
 
@@ -101,8 +102,6 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
         include: { assigned_to: { select: { name: true } } },
       },
       icps: {
-        where: { status: "active" },
-        take: 1,
         orderBy: { version: "desc" },
       },
       weekly_reports: {
@@ -128,7 +127,27 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
   const liAcceptRate = liRequests > 0 ? Math.round((liAccepted / liRequests) * 100) : 0;
 
   const reportDaysLeft = daysToTuesday(today);
-  const icp = campaign.icps[0] ?? null;
+  const activeIcp = campaign.icps.find((i) => i.status === "active") ?? campaign.icps[0] ?? null;
+
+  // Taktindikator: compare MTD meetings against prorated monthly target
+  const dayOfMonth = today.getDate();
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const proratedTarget = Math.round((campaign.monthly_meeting_target * dayOfMonth) / daysInMonth);
+  const pace: "on_track" | "behind" | "ahead" =
+    meetingsMtd >= proratedTarget * 1.1 ? "ahead" :
+    meetingsMtd >= proratedTarget * 0.85 ? "on_track" : "behind";
+
+  const chartWindowStart = new Date(today);
+  chartWindowStart.setDate(chartWindowStart.getDate() - 27);
+  const activityLogsForChart = campaign.activity_logs
+    .filter((l) => l.date >= chartWindowStart && l.date <= today)
+    .map((l) => ({
+      date: l.date.toISOString().split("T")[0] ?? "",
+      dials: l.dials,
+      connects: l.connects,
+      emails_sent: l.emails_sent,
+      meetings_booked: l.meetings_booked,
+    }));
 
   // Today's log (if any) for activity form pre-fill
   const todayLog = campaign.activity_logs.find(
@@ -307,6 +326,8 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
                 ))}
               </div>
 
+              <ActivityChart logs={activityLogsForChart} />
+
               {/* Open tasks */}
               <div className="rounded-[8px] border border-zinc-200 bg-white">
                 <div className="border-b border-zinc-100 px-4 py-[8px]">
@@ -481,58 +502,96 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
           {/* ── ICP ── */}
           {activeTab === "icp" && (
             <div className="space-y-3">
-              {!icp ? (
+              {campaign.icps.length === 0 ? (
                 <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-6 text-center text-[12px] text-zinc-400">
-                  Ingen aktiv ICP-profil för denna kampanj.
+                  Ingen ICP-profil för denna kampanj.
                 </div>
               ) : (
                 <>
-                  <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-3">
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-[13px] font-semibold text-zinc-900">ICP v{icp.version}</p>
-                      <span className="rounded-[6px] bg-[rgba(29,158,117,0.1)] px-[7px] py-[2px] text-[10px] font-medium text-[#0F6E56]">Aktiv</span>
+                  {/* Version history bar */}
+                  {campaign.icps.length > 1 && (
+                    <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-[10px]">
+                      <p className="text-[10px] font-medium uppercase tracking-[0.4px] text-zinc-400 mb-2">Versionshistorik</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {campaign.icps.map((v) => {
+                          const statusCls =
+                            v.status === "active"   ? "border-[#1D9E75] bg-[rgba(29,158,117,0.08)] text-[#0F6E56]" :
+                            v.status === "approved" ? "border-amber-300 bg-amber-50 text-amber-700" :
+                                                      "border-zinc-200 bg-zinc-50 text-zinc-500";
+                          const statusLabel =
+                            v.status === "active" ? "Aktiv" : v.status === "approved" ? "Godkänd" : "Utkast";
+                          const isShown = activeIcp?.icp_id === v.icp_id;
+                          return (
+                            <div key={v.icp_id} className={`flex items-center gap-[6px] rounded-[6px] border px-[8px] py-[5px] text-[11px] ${isShown ? statusCls : "border-zinc-200 bg-zinc-50 text-zinc-500"}`}>
+                              <span className="font-medium">v{v.version}</span>
+                              <span className={`rounded-[4px] px-[4px] py-[1px] text-[9px] font-medium ${statusCls}`}>{statusLabel}</span>
+                              <span className="text-[9px] text-zinc-400">{fmtDate(v.created_at)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-[12px]">
-                      {[
-                        { label: "Branschvertikaler",   val: icp.industry_verticals },
-                        { label: "Företagsstorlekar",   val: icp.company_sizes },
-                        { label: "Geografier",          val: icp.geographies },
-                        { label: "Jobbtitlar",          val: icp.job_titles },
-                        { label: "Pain points",         val: icp.pain_points },
-                        { label: "Nyckelbudskap",       val: icp.key_messages },
-                      ].map(({ label, val }) => (
-                        <div key={label}>
-                          <p className="text-[10px] text-zinc-400 mb-1">{label}</p>
+                  )}
+
+                  {/* Active ICP detail */}
+                  {activeIcp && (
+                    <>
+                      <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-3">
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-[13px] font-semibold text-zinc-900">ICP v{activeIcp.version}</p>
+                          <span className={`rounded-[6px] px-[7px] py-[2px] text-[10px] font-medium ${
+                            activeIcp.status === "active"
+                              ? "bg-[rgba(29,158,117,0.1)] text-[#0F6E56]"
+                              : activeIcp.status === "approved"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-zinc-100 text-zinc-500"
+                          }`}>
+                            {activeIcp.status === "active" ? "Aktiv" : activeIcp.status === "approved" ? "Godkänd" : "Utkast"}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-[12px]">
+                          {[
+                            { label: "Branschvertikaler", val: activeIcp.industry_verticals },
+                            { label: "Företagsstorlekar", val: activeIcp.company_sizes },
+                            { label: "Geografier",        val: activeIcp.geographies },
+                            { label: "Jobbtitlar",        val: activeIcp.job_titles },
+                            { label: "Pain points",       val: activeIcp.pain_points },
+                            { label: "Nyckelbudskap",     val: activeIcp.key_messages },
+                          ].map(({ label, val }) => (
+                            <div key={label}>
+                              <p className="text-[10px] text-zinc-400 mb-1">{label}</p>
+                              <div className="flex flex-wrap gap-[4px]">
+                                {val.map((v) => (
+                                  <span key={v} className="rounded-[4px] bg-zinc-100 px-[6px] py-[2px] text-[11px] text-zinc-700">{v}</span>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-3">
+                          <p className="text-[10px] text-zinc-400 mb-1">Veckofokus</p>
+                          <p className="text-[12px] text-zinc-900">{activeIcp.current_focus || "–"}</p>
+                        </div>
+                        <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-3">
+                          <p className="text-[10px] text-zinc-400 mb-1">Uppskattad audience pool</p>
+                          <p className="text-[20px] font-medium text-[#18181B]">{activeIcp.estimated_pool_size.toLocaleString("sv-SE")}</p>
+                        </div>
+                      </div>
+
+                      {activeIcp.exclusion_domains.length > 0 && (
+                        <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-3">
+                          <p className="text-[10px] text-zinc-400 mb-2">Exkluderingsdomäner</p>
                           <div className="flex flex-wrap gap-[4px]">
-                            {val.map((v) => (
-                              <span key={v} className="rounded-[4px] bg-zinc-100 px-[6px] py-[2px] text-[11px] text-zinc-700">{v}</span>
+                            {activeIcp.exclusion_domains.map((d) => (
+                              <span key={d} className="rounded-[4px] bg-rose-50 px-[6px] py-[2px] text-[11px] text-rose-700">{d}</span>
                             ))}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-3">
-                      <p className="text-[10px] text-zinc-400 mb-1">Veckofokus</p>
-                      <p className="text-[12px] text-zinc-900">{icp.current_focus || "–"}</p>
-                    </div>
-                    <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-3">
-                      <p className="text-[10px] text-zinc-400 mb-1">Uppskattad audience pool</p>
-                      <p className="text-[20px] font-medium text-[#18181B]">{icp.estimated_pool_size.toLocaleString("sv-SE")}</p>
-                    </div>
-                  </div>
-
-                  {icp.exclusion_domains.length > 0 && (
-                    <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-3">
-                      <p className="text-[10px] text-zinc-400 mb-2">Exkluderingsdomäner</p>
-                      <div className="flex flex-wrap gap-[4px]">
-                        {icp.exclusion_domains.map((d) => (
-                          <span key={d} className="rounded-[4px] bg-rose-50 px-[6px] py-[2px] text-[11px] text-rose-700">{d}</span>
-                        ))}
-                      </div>
-                    </div>
+                      )}
+                    </>
                   )}
                 </>
               )}
@@ -605,7 +664,8 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
               thisWeekActivity={thisWeekActivity}
               meetingsWeek={meetingsWeek}
               meetingsMtd={meetingsMtd}
-              currentFocus={icp?.current_focus ?? ""}
+              currentFocus={activeIcp?.current_focus ?? ""}
+              pace={pace}
             />
           )}
 
