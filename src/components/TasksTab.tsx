@@ -38,6 +38,8 @@ export default function TasksTab({ tasks: initialTasks, campaignId, pmId }: Prop
   const [tasks, setTasks] = useState(initialTasks);
   const [showForm, setShowForm] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [priorityFilter, setPriorityFilter] = useState<"all" | TaskPriority>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>("all");
 
   // ── Update task status ──
   async function updateStatus(taskId: string, newStatus: TaskStatus) {
@@ -82,6 +84,12 @@ export default function TasksTab({ tasks: initialTasks, campaignId, pmId }: Prop
     await fetch(`/api/tasks/${taskId}`, { method: "DELETE" });
     startTransition(() => router.refresh());
   }
+
+  const filteredTasks = tasks.filter((task) => {
+    const priorityMatch = priorityFilter === "all" || task.priority === priorityFilter;
+    const statusMatch = statusFilter === "all" || task.status === statusFilter;
+    return priorityMatch && statusMatch;
+  });
 
   return (
     <div className="space-y-3">
@@ -132,10 +140,60 @@ export default function TasksTab({ tasks: initialTasks, campaignId, pmId }: Prop
         </form>
       )}
 
+      {/* Filters */}
+      <div className="rounded-[8px] border border-zinc-200 bg-white px-3 py-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex items-center gap-[6px]">
+            <span className="text-[10px] font-medium uppercase tracking-[0.3px] text-zinc-400">Prioritet</span>
+            {([
+              { key: "all", label: "Alla" },
+              { key: "high", label: "Hög" },
+              { key: "medium", label: "Medium" },
+              { key: "low", label: "Låg" },
+            ] as const).map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setPriorityFilter(option.key)}
+                className={`rounded-[5px] border px-[8px] py-[3px] text-[10px] leading-tight ${
+                  priorityFilter === option.key
+                    ? "border-[#1D9E75] bg-[rgba(29,158,117,0.1)] text-[#0F6E56] font-medium"
+                    : "border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-[6px]">
+            <span className="text-[10px] font-medium uppercase tracking-[0.3px] text-zinc-400">Status</span>
+            {([
+              { key: "all", label: "Alla" },
+              { key: "open", label: "Öppen" },
+              { key: "in_progress", label: "Pågår" },
+              { key: "done", label: "Klar" },
+            ] as const).map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setStatusFilter(option.key)}
+                className={`rounded-[5px] border px-[8px] py-[3px] text-[10px] leading-tight ${
+                  statusFilter === option.key
+                    ? "border-[#1D9E75] bg-[rgba(29,158,117,0.1)] text-[#0F6E56] font-medium"
+                    : "border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Kanban columns */}
       <div className="grid grid-cols-3 gap-3">
         {COL_CONFIG.map((col) => {
-          const colTasks = tasks.filter((t) => t.status === col.key);
+          const colTasks = filteredTasks.filter((t) => t.status === col.key);
           const today = new Date(); today.setHours(0, 0, 0, 0);
           return (
             <div key={col.key} className="rounded-[8px] border border-zinc-200 bg-white overflow-hidden">

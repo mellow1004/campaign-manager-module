@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 interface WeeklyReport {
@@ -43,15 +43,42 @@ interface Props {
   pace: "on_track" | "behind" | "ahead";
 }
 
-function fmtShort(d: string) {
+type HistoryItem = {
+  id: string;
+  week_number: number;
+  year: number;
+  status: "draft" | "sent";
+  sent_at: string | null;
+  report: WeeklyReport | null;
+  isVirtualDraft: boolean;
+};
+
+const VIRTUAL_DRAFT_ID = "__current_week_draft__";
+
+function fmtShort(d: string): string {
   return new Date(d).toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
 }
 
-const PACE_LABELS: Record<"on_track" | "behind" | "ahead", { label: string; cls: string }> = {
-  on_track: { label: "På spår",  cls: "bg-[rgba(29,158,117,0.1)] text-[#0F6E56]" },
-  behind:   { label: "Bakom",    cls: "bg-[rgba(226,75,74,0.1)] text-[#A32D2D]" },
-  ahead:    { label: "Före",     cls: "bg-[rgba(55,138,221,0.1)] text-[#185FA5]" },
-};
+function getIsoWeekStart(week: number, year: number): Date {
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const week1Monday = new Date(jan4);
+  week1Monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1);
+  const target = new Date(week1Monday);
+  target.setUTCDate(week1Monday.getUTCDate() + (week - 1) * 7);
+  return target;
+}
+
+function weekRangeLabel(week: number, year: number): string {
+  const start = getIsoWeekStart(week, year);
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6);
+  const startLocal = new Date(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+  const endLocal = new Date(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+  const s = startLocal.toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
+  const e = endLocal.toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
+  return `${s} – ${e}`;
+}
 
 export default function ReportsTab({
   reports: initialReports,
@@ -71,16 +98,97 @@ export default function ReportsTab({
 }: Props) {
   const router = useRouter();
   const [reports, setReports] = useState<WeeklyReport[]>(initialReports);
-  const [showForm, setShowForm] = useState(false);
-  const [viewReport, setViewReport] = useState<WeeklyReport | null>(null);
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const [aiCommentary, setAiCommentary] = useState("");
+  const [pmCommentary, setPmCommentary] = useState("");
+  const [nextWeekFocus, setNextWeekFocus] = useState(currentFocus);
   const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [aiComment, setAiComment] = useState("");
-  const [pmComment, setPmComment] = useState("");
-  const [nextFocus, setNextFocus] = useState(currentFocus);
-  const [, startTransition] = useTransition();
 
-  async function generateAI() {
+  const reportsSorted = useMemo(
+    () =>
+      [...reports].sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        return b.week_number - a.week_number;
+      }),
+    [reports]
+  );
+
+  const hasCurrentWeekReport = reportsSorted.some((r) => r.week_number === currentWeekNumber && r.year === currentYear);
+
+  const historyItems = useMemo<HistoryItem[]>(() => {
+    const mapped: HistoryItem[] = reportsSorted.map((r) => ({
+      id: r.report_id,
+      week_number: r.week_number,
+      year: r.year,
+      status: r.status,
+      sent_at: r.sent_at,
+      report: r,
+      isVirtualDraft: false,
+    }));
+    if (!hasCurrentWeekReport) {
+      mapped.unshift({
+        id: VIRTUAL_DRAFT_ID,
+        week_number: currentWeekNumber,
+        year: currentYear,
+        status: "draft",
+        sent_at: null,
+        report: null,
+        isVirtualDraft: true,
+      });
+    }
+    return mapped;
+  }, [reportsSorted, hasCurrentWeekReport, currentWeekNumber, currentYear]);
+
+  useEffect(() => {
+    if (!selectedReportId) {
+      setSelectedReportId(historyItems[0]?.id ?? null);
+    }
+  }, [historyItems, selectedReportId]);
+
+  const selectedHistory = historyItems.find((h) => h.id === selectedReportId) ?? historyItems[0] ?? null;
+
+  const selectedData = useMemo(() => {
+    if (!selectedHistory) return null;
+    if (selectedHistory.report) return selectedHistory.report;
+    return {
+      report_id: VIRTUAL_DRAFT_ID,
+      week_number: currentWeekNumber,
+      year: currentYear,
+      status: "draft" as const,
+      meetings_week: meetingsWeek,
+      meetings_mtd: meetingsMtd,
+      meetings_total: meetingsMtd,
+      ai_commentary: "",
+      pm_commentary: "",
+      next_week_focus: currentFocus,
+      sent_at: null,
+    };
+  }, [selectedHistory, currentWeekNumber, currentYear, meetingsWeek, meetingsMtd, currentFocus]);
+
+  useEffect(() => {
+    if (!selectedData) return;
+    setAiCommentary(selectedData.ai_commentary ?? "");
+    setPmCommentary(selectedData.pm_commentary ?? "");
+    setNextWeekFocus(selectedData.next_week_focus ?? currentFocus);
+  }, [selectedData, currentFocus]);
+
+  const weekLabel = selectedData ? weekRangeLabel(selectedData.week_number, selectedData.year) : "–";
+
+  const meetingsByPhone = Math.round(meetingsWeek * 0.5);
+  const meetingsByEmail = Math.round(meetingsWeek * 0.2);
+  const meetingsByLI = Math.max(0, meetingsWeek - meetingsByPhone - meetingsByEmail);
+
+  const paceBadge =
+    pace === "on_track"
+      ? { label: `↑ På spår mot ${monthlyMeetingTarget}/mån-mål`, cls: "text-[#3B6D11] bg-[#EAF3DE]" }
+      : pace === "behind"
+      ? { label: `↓ Bakom ${monthlyMeetingTarget}/mån-mål`, cls: "text-[#A32D2D] bg-[rgba(226,75,74,0.08)]" }
+      : { label: `↑ Före ${monthlyMeetingTarget}/mån-mål`, cls: "text-[#185FA5] bg-[rgba(55,138,221,0.08)]" };
+
+  async function generateAI(): Promise<void> {
+    if (!selectedData) return;
     setGenerating(true);
     try {
       const res = await fetch("/api/reports/generate", {
@@ -89,315 +197,342 @@ export default function ReportsTab({
         body: JSON.stringify({
           clientName,
           market,
-          weekNumber: currentWeekNumber,
+          weekNumber: selectedData.week_number,
           activity: thisWeekActivity,
-          meetingsWeek,
+          meetingsWeek: selectedData.meetings_week,
           weeklyMeetingTarget,
-          meetingsMtd,
+          meetingsMtd: selectedData.meetings_mtd,
           monthlyMeetingTarget,
-          currentFocus,
+          currentFocus: nextWeekFocus || currentFocus,
         }),
       });
-      if (res.ok) {
-        const { commentary } = await res.json() as { commentary: string };
-        setAiComment(commentary);
-      }
+      if (!res.ok) return;
+      const data = (await res.json()) as { commentary: string };
+      setAiCommentary(data.commentary);
     } finally {
       setGenerating(false);
     }
   }
 
-  async function handleCreate(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setSaving(true);
+  async function createCurrentDraftIfNeeded(): Promise<string | null> {
+    if (!selectedData) return null;
+    if (!selectedHistory?.isVirtualDraft && selectedData.report_id !== VIRTUAL_DRAFT_ID) return selectedData.report_id;
 
     const res = await fetch("/api/reports", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        campaign_id:             campaignId,
-        sent_by_id:              pmId,
-        week_number:             currentWeekNumber,
-        year:                    currentYear,
-        meetings_week:           meetingsWeek,
-        meetings_mtd:            meetingsMtd,
-        meetings_total:          meetingsMtd,
-        ai_commentary:           aiComment,
-        pm_commentary:           pmComment,
-        next_week_focus:         nextFocus,
-        activity_summary:        thisWeekActivity,
-        recipients:              [],
-        status:                  "draft",
+        campaign_id: campaignId,
+        sent_by_id: pmId,
+        week_number: currentWeekNumber,
+        year: currentYear,
+        meetings_week: selectedData.meetings_week,
+        meetings_mtd: selectedData.meetings_mtd,
+        meetings_total: selectedData.meetings_total,
+        ai_commentary: aiCommentary,
+        pm_commentary: pmCommentary,
+        next_week_focus: nextWeekFocus,
+        activity_summary: thisWeekActivity,
+        recipients: [],
+        status: "draft",
       }),
     });
+    if (!res.ok) return null;
+    const created = (await res.json()) as WeeklyReport;
+    setReports((prev) => [created, ...prev.filter((r) => r.report_id !== created.report_id)]);
+    setSelectedReportId(created.report_id);
+    return created.report_id;
+  }
 
-    if (res.ok) {
-      const newReport = await res.json() as WeeklyReport;
-      setReports((prev) => [newReport, ...prev]);
-      setShowForm(false);
-      setAiComment("");
-      setPmComment("");
-      startTransition(() => router.refresh());
+  async function saveDraft(): Promise<void> {
+    if (!selectedData) return;
+    setSaving(true);
+    try {
+      const reportId = await createCurrentDraftIfNeeded();
+      if (!reportId) return;
+      const res = await fetch(`/api/reports/${reportId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pm_commentary: pmCommentary,
+          next_week_focus: nextWeekFocus,
+          ai_commentary: aiCommentary,
+        }),
+      });
+      if (!res.ok) return;
+      const updated = (await res.json()) as WeeklyReport;
+      setReports((prev) => prev.map((r) => (r.report_id === updated.report_id ? updated : r)));
+      router.refresh();
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
+  }
+
+  async function sendReport(): Promise<void> {
+    if (!selectedData) return;
+    setSending(true);
+    try {
+      const reportId = await createCurrentDraftIfNeeded();
+      if (!reportId) return;
+      const res = await fetch(`/api/reports/${reportId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pm_commentary: pmCommentary,
+          next_week_focus: nextWeekFocus,
+          ai_commentary: aiCommentary,
+          status: "sent",
+          sent_at: new Date().toISOString(),
+        }),
+      });
+      if (!res.ok) return;
+      const updated = (await res.json()) as WeeklyReport;
+      setReports((prev) => prev.map((r) => (r.report_id === updated.report_id ? updated : r)));
+      router.refresh();
+    } finally {
+      setSending(false);
+    }
+  }
+
+  if (!selectedData) {
+    return <div className="rounded-[8px] border border-[#E4E4E7] bg-white px-4 py-4 text-[12px] text-[#71717A]">Ingen rapportdata.</div>;
   }
 
   return (
-    <div className="space-y-3">
-      {/* Header row */}
-      <div className="flex items-center justify-between">
-        <p className="text-[11px] font-medium uppercase tracking-[0.4px] text-zinc-400">
-          {reports.length} rapporter totalt
-        </p>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="rounded-[6px] border border-[#1D9E75] bg-[rgba(29,158,117,0.07)] px-[10px] py-[5px] text-[11px] text-[#1D9E75] font-medium hover:bg-[rgba(29,158,117,0.15)]"
-        >
-          {showForm ? "Avbryt" : "+ Generera rapport"}
-        </button>
-      </div>
+    <div className="h-full min-h-[640px]">
+      <div className="grid h-full grid-cols-[150px_1fr_1fr] gap-[12px]">
+        <section className="flex flex-col overflow-hidden rounded-[8px] border border-[#E4E4E7] bg-white">
+          <div className="flex items-center justify-between border-b border-[#F4F4F5] bg-[#FAFAFA] px-[13px] py-[10px]">
+            <p className="text-[12px] font-medium text-[#18181B]">Historik</p>
+          </div>
+          <div className="overflow-y-auto">
+            {historyItems.map((item) => {
+              const selected = item.id === selectedData.report_id || item.id === selectedReportId;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSelectedReportId(item.id)}
+                  className={`flex w-full cursor-pointer items-center justify-between border-b border-[#F4F4F5] px-[13px] py-[9px] text-left hover:bg-[#FAFAFA] ${
+                    selected ? "bg-[rgba(55,138,221,0.05)]" : ""
+                  }`}
+                >
+                  <div>
+                    <p className={`text-[12px] font-medium ${selected ? "text-[#185FA5]" : "text-[#18181B]"}`}>
+                      V.{item.week_number}
+                    </p>
+                    <p className="text-[10px] text-[#71717A]">
+                      {item.isVirtualDraft ? `v.${currentWeekNumber} utkast` : item.sent_at ? fmtShort(item.sent_at) : "Utkast"}
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-[10px] px-[7px] py-[2px] text-[9px] font-medium ${
+                      item.status === "sent"
+                        ? "bg-[rgba(29,158,117,0.1)] text-[#0F6E56]"
+                        : "bg-[rgba(239,159,39,0.12)] text-[#854F0B]"
+                    }`}
+                  >
+                    {item.status === "sent" ? "Skickad" : "Utkast"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
 
-      {/* Report generation form */}
-      {showForm && (
-        <div className="rounded-[8px] border border-zinc-200 bg-white overflow-hidden">
-          <div className="border-b border-zinc-100 bg-zinc-50 px-4 py-[8px] flex items-center justify-between">
-            <p className="text-[12px] font-medium text-zinc-700">
-              Veckorapport v.{currentWeekNumber} {currentYear}
-            </p>
-            <div className="flex items-center gap-2">
-              <span className={`rounded-[4px] px-[6px] py-[1px] text-[10px] font-medium ${PACE_LABELS[pace].cls}`}>
-                {PACE_LABELS[pace].label}
-              </span>
-              <span className="rounded-[4px] bg-amber-100 px-[6px] py-[1px] text-[10px] text-amber-700 font-medium">
-                Utkast
-              </span>
+        <section className="flex flex-col overflow-hidden rounded-[8px] border border-[#E4E4E7] bg-white">
+          <div className="flex items-center justify-between border-b border-[#F4F4F5] bg-[#FAFAFA] px-[13px] py-[10px]">
+            <div>
+              <p className="text-[12px] font-medium text-[#18181B]">Redigera rapport · v.{selectedData.week_number}</p>
+              <p className="text-[10px] text-[#71717A]">{weekLabel}</p>
             </div>
+            <span className="rounded-[10px] bg-[rgba(83,74,183,0.12)] px-[7px] py-[2px] text-[9px] font-medium text-[#534AB7]">
+              AI-genererad
+            </span>
           </div>
 
-          <div className="p-4 space-y-4">
-            {/* Activity summary (read-only) */}
+          <div className="flex-1 space-y-[12px] overflow-y-auto p-[14px]">
             <div>
-              <p className="text-[10px] font-medium uppercase tracking-[0.4px] text-zinc-400 mb-2">
-                Aktivitet denna vecka
-              </p>
-              <div className="grid grid-cols-4 gap-2">
+              <p className="mb-[6px] text-[10px] uppercase tracking-[0.4px] text-[#71717A]">NYCKELTAL (AUTO)</p>
+              <div className="mb-[6px] grid grid-cols-3 gap-[7px]">
                 {[
-                  { label: "Möten", val: meetingsWeek, target: weeklyMeetingTarget, highlight: true },
-                  { label: "Dials",    val: thisWeekActivity.dials },
-                  { label: "Connects", val: thisWeekActivity.connects },
-                  { label: "Email",    val: thisWeekActivity.emails_sent },
-                ].map(({ label, val, target, highlight }) => (
-                  <div key={label} className="rounded-[6px] border border-zinc-100 bg-zinc-50 px-3 py-2">
-                    <p className="text-[9px] text-zinc-400">{label}</p>
-                    <p className={`text-[16px] font-medium ${highlight ? "text-[#1D9E75]" : "text-[#18181B]"}`}>
-                      {val}
-                    </p>
-                    {target !== undefined && (
-                      <p className="text-[9px] text-zinc-400">mål: {target}</p>
-                    )}
+                  { val: selectedData.meetings_week, label: "Möten veckan" },
+                  { val: selectedData.meetings_mtd, label: "MTD totalt" },
+                  { val: selectedData.meetings_total, label: "Totalt kampanj" },
+                ].map((kpi) => (
+                  <div key={kpi.label} className="rounded-[6px] bg-[#F4F4F5] px-[10px] py-[7px] text-center">
+                    <p className="text-[15px] font-medium text-[#18181B]">{kpi.val}</p>
+                    <p className="mt-[2px] text-[9px] text-[#71717A]">{kpi.label}</p>
                   </div>
                 ))}
               </div>
+              <span className={`inline-flex items-center gap-[5px] rounded-[20px] px-[9px] py-[3px] text-[11px] ${paceBadge.cls}`}>
+                {paceBadge.label}
+              </span>
             </div>
 
-            {/* AI commentary */}
             <div>
-              <div className="flex items-center justify-between mb-[6px]">
-                <label className="text-[10px] font-medium uppercase tracking-[0.4px] text-zinc-400">
-                  AI-kommentar
-                </label>
+              <p className="mb-[6px] text-[10px] uppercase tracking-[0.4px] text-[#71717A]">AKTIVITETSSAMMANFATTNING (AUTO)</p>
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="bg-[#FAFAFA]">
+                    {["Kanal", "Volym", "Utfall", "Möten"].map((h) => (
+                      <th key={h} className="px-[8px] py-[6px] text-left text-[9px] uppercase tracking-[0.4px] text-[#71717A]">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { kanal: "Telefon", vol: `${thisWeekActivity.dials} dials`, utf: `${thisWeekActivity.connects} connects`, moten: meetingsByPhone },
+                    { kanal: "Email", vol: `${thisWeekActivity.emails_sent} skickade`, utf: `${thisWeekActivity.replies} svar`, moten: meetingsByEmail },
+                    {
+                      kanal: "LinkedIn",
+                      vol: `${thisWeekActivity.linkedin_requests} förfrågn.`,
+                      utf: `${thisWeekActivity.linkedin_accepted} accept.`,
+                      moten: meetingsByLI,
+                    },
+                  ].map((row) => (
+                    <tr key={row.kanal} className="border-b border-[#F4F4F5]">
+                      <td className="px-[8px] py-[6px] text-[#18181B]">{row.kanal}</td>
+                      <td className="px-[8px] py-[6px] text-[#71717A]">{row.vol}</td>
+                      <td className="px-[8px] py-[6px] text-[#71717A]">{row.utf}</td>
+                      <td className="px-[8px] py-[6px] font-medium text-[#185FA5]">{row.moten}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div>
+              <p className="mb-[6px] text-[10px] uppercase tracking-[0.4px] text-[#71717A]">AI-KOMMENTAR (REDIGERBAR)</p>
+              {aiCommentary ? (
+                <div className="relative rounded-[6px] border border-[rgba(83,74,183,0.18)] bg-[rgba(83,74,183,0.04)] p-[11px]">
+                  <span className="absolute right-0 top-0 rounded-bl-[6px] rounded-tr-[6px] bg-[#534AB7] px-[7px] py-[2px] text-[9px] font-medium text-white">
+                    Claude
+                  </span>
+                  <textarea
+                    value={aiCommentary}
+                    onChange={(e) => setAiCommentary(e.target.value)}
+                    rows={5}
+                    className="w-full resize-none bg-transparent text-[12px] leading-[1.65] text-[#18181B] outline-none"
+                  />
+                </div>
+              ) : (
                 <button
                   type="button"
                   onClick={generateAI}
                   disabled={generating}
-                  className="flex items-center gap-1 rounded-[5px] border border-zinc-200 bg-white px-2 py-[4px] text-[10px] text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 disabled:opacity-50"
+                  className="rounded-[6px] border border-[#E4E4E7] bg-white px-[10px] py-[6px] text-[11px] text-[#71717A] hover:bg-[#FAFAFA] disabled:opacity-60"
                 >
-                  {generating ? (
-                    <>
-                      <span className="animate-spin">⟳</span> Genererar…
-                    </>
-                  ) : (
-                    <>✦ Generera med AI</>
-                  )}
+                  {generating ? "Genererar…" : "Generera AI-kommentar"}
                 </button>
-              </div>
-              <textarea
-                value={aiComment}
-                onChange={(e) => setAiComment(e.target.value)}
-                rows={4}
-                placeholder="Klicka 'Generera med AI' eller skriv en kommentar manuellt…"
-                className="w-full rounded-[6px] border border-zinc-200 px-3 py-2 text-[12px] text-zinc-900 placeholder:text-zinc-300 focus:border-[#1D9E75] focus:outline-none resize-none"
-              />
+              )}
             </div>
 
-            {/* PM commentary */}
             <div>
-              <label className="block text-[10px] font-medium uppercase tracking-[0.4px] text-zinc-400 mb-[6px]">
-                PM-kommentar
-              </label>
+              <p className="mb-[6px] text-[10px] uppercase tracking-[0.4px] text-[#71717A]">NÄSTA VECKAS FOKUS</p>
               <textarea
-                value={pmComment}
-                onChange={(e) => setPmComment(e.target.value)}
-                rows={3}
-                placeholder="Lägg till egna noteringar för rapporten…"
-                className="w-full rounded-[6px] border border-zinc-200 px-3 py-2 text-[12px] text-zinc-900 placeholder:text-zinc-300 focus:border-[#1D9E75] focus:outline-none resize-none"
+                value={nextWeekFocus}
+                onChange={(e) => setNextWeekFocus(e.target.value)}
+                rows={2}
+                className="w-full resize-none rounded-[6px] border border-[#E4E4E7] bg-[#FAFAFA] px-[9px] py-[7px] text-[12px] text-[#18181B] outline-none"
               />
             </div>
-
-            {/* Next week focus */}
-            <div>
-              <label className="block text-[10px] font-medium uppercase tracking-[0.4px] text-zinc-400 mb-[6px]">
-                Nästa veckas fokus
-              </label>
-              <input
-                value={nextFocus}
-                onChange={(e) => setNextFocus(e.target.value)}
-                placeholder="Vad är fokus nästa vecka?"
-                className="w-full rounded-[6px] border border-zinc-200 px-3 py-[7px] text-[12px] text-zinc-900 placeholder:text-zinc-300 focus:border-[#1D9E75] focus:outline-none"
-              />
-            </div>
-
-            {/* Actions */}
-            <form onSubmit={handleCreate}>
-              <div className="flex justify-end gap-2 pt-1 border-t border-zinc-100">
-                <button
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                  className="rounded-[5px] border border-zinc-200 px-3 py-[5px] text-[11px] text-zinc-500 hover:bg-zinc-50"
-                >
-                  Avbryt
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded-[5px] bg-zinc-800 px-4 py-[5px] text-[11px] font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
-                >
-                  {saving ? "Sparar…" : "Spara som utkast"}
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
-      )}
 
-      {/* View modal */}
-      {viewReport && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="w-full max-w-lg rounded-[10px] border border-zinc-200 bg-white shadow-xl overflow-hidden">
-            <div className="border-b border-zinc-100 bg-zinc-50 px-5 py-3 flex items-center justify-between">
-              <p className="text-[13px] font-semibold text-zinc-900">
-                v.{viewReport.week_number} {viewReport.year} – {clientName}
-              </p>
+          <div className="flex items-center justify-between border-t border-[#F4F4F5] bg-[#FAFAFA] px-[13px] py-[10px]">
+            <p className="text-[11px] text-[#71717A]">Till: {clientName} rapport@brightvision.com</p>
+            <div className="flex gap-[6px]">
               <button
-                onClick={() => setViewReport(null)}
-                className="text-zinc-400 hover:text-zinc-700 text-[18px] leading-none"
+                type="button"
+                onClick={saveDraft}
+                disabled={saving || sending}
+                className="rounded-[6px] border border-[#E4E4E7] bg-white px-[10px] py-[5px] text-[11px] text-[#71717A] disabled:opacity-60"
               >
-                ×
+                {saving ? "Sparar..." : "Spara utkast"}
+              </button>
+              <button
+                type="button"
+                onClick={sendReport}
+                disabled={saving || sending}
+                className="rounded-[6px] border border-[#0F6E56] bg-[#0F6E56] px-[10px] py-[5px] text-[11px] text-white disabled:opacity-60"
+              >
+                {sending ? "Skickar..." : "Skicka rapport →"}
               </button>
             </div>
-            <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  { label: "Möten veckan", val: viewReport.meetings_week },
-                  { label: "MTD-möten",   val: viewReport.meetings_mtd },
-                  { label: "Totalt",       val: viewReport.meetings_total },
-                ].map(({ label, val }) => (
-                  <div key={label} className="rounded-[6px] border border-zinc-100 bg-zinc-50 px-3 py-2 text-center">
-                    <p className="text-[9px] text-zinc-400">{label}</p>
-                    <p className="text-[18px] font-medium text-[#18181B]">{val}</p>
-                  </div>
-                ))}
-              </div>
-
-              {viewReport.ai_commentary && (
-                <div>
-                  <p className="text-[10px] font-medium uppercase tracking-[0.4px] text-zinc-400 mb-1">
-                    AI-kommentar
-                  </p>
-                  <p className="text-[12px] text-zinc-700 leading-relaxed bg-zinc-50 rounded-[6px] p-3 border border-zinc-100">
-                    {viewReport.ai_commentary}
-                  </p>
-                </div>
-              )}
-
-              {viewReport.pm_commentary && (
-                <div>
-                  <p className="text-[10px] font-medium uppercase tracking-[0.4px] text-zinc-400 mb-1">
-                    PM-kommentar
-                  </p>
-                  <p className="text-[12px] text-zinc-700 leading-relaxed">{viewReport.pm_commentary}</p>
-                </div>
-              )}
-
-              {viewReport.next_week_focus && (
-                <div>
-                  <p className="text-[10px] font-medium uppercase tracking-[0.4px] text-zinc-400 mb-1">
-                    Nästa veckas fokus
-                  </p>
-                  <p className="text-[12px] text-zinc-700">{viewReport.next_week_focus}</p>
-                </div>
-              )}
-            </div>
           </div>
-        </div>
-      )}
+        </section>
 
-      {/* Reports table */}
-      {reports.length === 0 ? (
-        <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-6 text-center text-[12px] text-zinc-400">
-          Inga rapporter genererade än.
-        </div>
-      ) : (
-        <div className="rounded-[8px] border border-zinc-200 bg-white overflow-hidden">
-          <table className="w-full text-[12px]">
-            <thead>
-              <tr className="border-b border-zinc-100 bg-zinc-50">
-                {["Vecka", "Möten", "MTD", "Status", "Skickad", ""].map((h) => (
-                  <th key={h} className="px-4 py-[7px] text-left font-medium text-zinc-500 text-[10px]">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {reports.map((report, ri) => (
-                <tr
-                  key={report.report_id}
-                  className={`border-b border-zinc-50 hover:bg-zinc-50 ${ri % 2 === 1 ? "bg-[#FAFAFA]" : ""}`}
-                >
-                  <td className="px-4 py-[7px] font-medium text-zinc-900">
-                    v.{report.week_number} {report.year}
-                  </td>
-                  <td className="px-4 py-[7px] font-medium">{report.meetings_week}</td>
-                  <td className="px-4 py-[7px] text-zinc-600">{report.meetings_mtd}</td>
-                  <td className="px-4 py-[7px]">
-                    <span
-                      className={`rounded-[6px] px-[6px] py-[2px] text-[10px] font-medium ${
-                        report.status === "sent"
-                          ? "bg-[rgba(29,158,117,0.1)] text-[#0F6E56]"
-                          : "bg-amber-100 text-amber-700"
-                      }`}
-                    >
-                      {report.status === "sent" ? "Skickad" : "Utkast"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-[7px] text-zinc-400 text-[11px]">
-                    {report.sent_at ? fmtShort(report.sent_at) : "–"}
-                  </td>
-                  <td className="px-4 py-[7px]">
-                    <button
-                      onClick={() => setViewReport(report)}
-                      className="text-[11px] text-zinc-400 hover:text-zinc-700"
-                    >
-                      Visa →
-                    </button>
-                  </td>
-                </tr>
+        <section className="flex flex-col overflow-hidden rounded-[8px] border border-[#E4E4E7] bg-white">
+          <div className="border-b border-[#F4F4F5] bg-[#FAFAFA] px-[13px] py-[10px]">
+            <p className="text-[12px] font-medium text-[#18181B]">Förhandsvisning · klientformat</p>
+            <p className="text-[10px] text-[#71717A]">Som kunden ser det</p>
+          </div>
+          <div className="flex-1 overflow-y-auto p-[14px]">
+            <h3 className="text-[16px] font-medium text-[#18181B]">Brightvision</h3>
+            <div className="my-[5px] h-[2px] w-[36px] bg-[#185FA5]" />
+            <p className="text-[17px] font-medium text-[#18181B]">Veckorapport v.{selectedData.week_number}</p>
+            <p className="text-[11px] text-[#71717A]">
+              {clientName} · {weekLabel}
+            </p>
+
+            <div className="mb-[14px] mt-[10px] grid grid-cols-3 gap-[7px]">
+              {[
+                { val: selectedData.meetings_week, label: "Möten veckan" },
+                { val: selectedData.meetings_mtd, label: "MTD totalt" },
+                { val: selectedData.meetings_total, label: "Totalt kampanj" },
+              ].map((kpi) => (
+                <div key={kpi.label} className="rounded-[7px] bg-[#F4F4F5] px-[11px] py-[9px] text-center">
+                  <p className="text-[19px] font-medium text-[#185FA5]">{kpi.val}</p>
+                  <p className="mt-[2px] text-[9px] text-[#71717A]">{kpi.label}</p>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            </div>
+
+            <p className="mb-[5px] mt-[12px] text-[10px] font-medium uppercase text-[#71717A]">SAMMANFATTNING</p>
+            <p className="text-[12px] leading-[1.65] text-[#18181B]">
+              {aiCommentary || "Ingen AI-kommentar tillagd ännu för denna vecka."}
+            </p>
+
+            <p className="mb-[5px] mt-[12px] text-[10px] font-medium uppercase text-[#71717A]">AKTIVITET PER KANAL</p>
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="bg-[#FAFAFA]">
+                  {["Kanal", "Volym", "Utfall", "Möten"].map((h) => (
+                    <th key={h} className="px-[8px] py-[6px] text-left text-[9px] uppercase tracking-[0.4px] text-[#71717A]">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  { kanal: "Telefon", vol: `${thisWeekActivity.dials} dials`, utf: `${thisWeekActivity.connects} connects`, moten: meetingsByPhone },
+                  { kanal: "Email", vol: `${thisWeekActivity.emails_sent} skickade`, utf: `${thisWeekActivity.replies} svar`, moten: meetingsByEmail },
+                  {
+                    kanal: "LinkedIn",
+                    vol: `${thisWeekActivity.linkedin_requests} förfrågn.`,
+                    utf: `${thisWeekActivity.linkedin_accepted} accept.`,
+                    moten: meetingsByLI,
+                  },
+                ].map((row) => (
+                  <tr key={row.kanal} className="border-b border-[#F4F4F5]">
+                    <td className="px-[8px] py-[6px] text-[#18181B]">{row.kanal}</td>
+                    <td className="px-[8px] py-[6px] text-[#71717A]">{row.vol}</td>
+                    <td className="px-[8px] py-[6px] text-[#71717A]">{row.utf}</td>
+                    <td className="px-[8px] py-[6px] font-medium text-[#185FA5]">{row.moten}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <p className="mb-[5px] mt-[12px] text-[10px] font-medium uppercase text-[#71717A]">NÄSTA VECKA</p>
+            <p className="text-[12px] leading-[1.65] text-[#18181B]">{nextWeekFocus || "Inget fokus satt ännu."}</p>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
