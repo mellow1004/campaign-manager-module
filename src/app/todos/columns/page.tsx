@@ -322,15 +322,6 @@ export default async function TodoColumnsPage({ searchParams }: PageProps) {
           })}
         </div>
       </main>
-      <style jsx global>{`
-        .todos-board-scroll::-webkit-scrollbar {
-          height: 5px;
-        }
-        .todos-board-scroll::-webkit-scrollbar-thumb {
-          background: #d4d4d8;
-          border-radius: 999px;
-        }
-      `}</style>
     </div>
   );
 }
