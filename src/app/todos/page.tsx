@@ -26,6 +26,25 @@ function dueOverdueLabel(taskDate: Date, today: Date): string {
   return `${days} dag${days === 1 ? "" : "ar"} sen`;
 }
 
+function fmtHeaderDate(date: Date): string {
+  const dayNames = ["Söndag", "Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag", "Lördag"];
+  const monthNames = [
+    "januari",
+    "februari",
+    "mars",
+    "april",
+    "maj",
+    "juni",
+    "juli",
+    "augusti",
+    "september",
+    "oktober",
+    "november",
+    "december",
+  ];
+  return `${dayNames[date.getDay()] ?? ""} ${date.getDate()} ${monthNames[date.getMonth()] ?? ""}`;
+}
+
 export default async function TodosPage() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -140,7 +159,7 @@ export default async function TodosPage() {
         <header className="flex items-center justify-between border-b border-[#E4E4E7] bg-white px-[18px] py-[13px]">
           <div>
             <p className="text-[15px] font-medium text-[#18181B]">Mina todos</p>
-            <p className="text-[11px] text-[#71717A]">Måndag 13 april · {openCount} öppna uppgifter</p>
+            <p className="text-[11px] text-[#71717A]">{fmtHeaderDate(today)} · {openCount} öppna uppgifter</p>
           </div>
           <div className="flex gap-[3px] rounded-[6px] border border-[#E4E4E7] bg-[#F4F4F5] p-[3px]">
             <Link

@@ -61,6 +61,7 @@ type TaskLite = {
   due_date: Date;
   priority: TaskPriority;
   status: string;
+  completed_at: Date | null;
 };
 
 export default async function TodoColumnsPage({ searchParams }: PageProps) {
@@ -83,8 +84,8 @@ export default async function TodoColumnsPage({ searchParams }: PageProps) {
         health_score: true,
         weekly_meeting_target: true,
         tasks: {
-          where: { status: { in: ["open", "in_progress"] } },
-          select: { task_id: true, title: true, due_date: true, priority: true, status: true },
+          where: { status: { in: ["open", "in_progress", "done"] } },
+          select: { task_id: true, title: true, due_date: true, priority: true, status: true, completed_at: true },
           orderBy: [{ due_date: "asc" }, { priority: "asc" }],
         },
         activity_logs: {
@@ -106,21 +107,31 @@ export default async function TodoColumnsPage({ searchParams }: PageProps) {
     }),
   ]);
 
-  const totalOpenTasks = campaigns.reduce((sum, c) => sum + c.tasks.length, 0);
+  const totalOpenTasks = campaigns.reduce(
+    (sum, c) => sum + c.tasks.filter((task) => task.status !== "done").length,
+    0
+  );
 
   const filteredCampaigns = campaigns
     .map((campaign) => {
-      const overdue = campaign.tasks.filter((t) => t.due_date < today);
-      const todayOrFuture = campaign.tasks.filter((t) => t.due_date >= today);
-      const filteredTasks =
-        activeFilter === "forserade"
-          ? overdue
-          : activeFilter === "hog"
-          ? campaign.tasks.filter((t) => t.priority === "high")
-          : campaign.tasks;
-      return { campaign, overdue, todayOrFuture, filteredTasks };
+      const openOrInProgress = campaign.tasks.filter((task) => task.status !== "done");
+      const overdue = openOrInProgress.filter((task) => task.due_date < today);
+      const todayOrFuture = openOrInProgress.filter((task) => task.due_date >= today);
+      const completed = campaign.tasks.filter((task) => task.status === "done");
+      const highPrioOpen = openOrInProgress.filter((task) => task.priority === "high");
+      return {
+        campaign,
+        overdue,
+        todayOrFuture,
+        completed,
+        highPrioOpen,
+      };
     })
-    .filter((x) => (activeFilter === "alla" ? true : x.filteredTasks.length > 0));
+    .filter((x) => {
+      if (activeFilter === "alla") return true;
+      if (activeFilter === "forserade") return x.overdue.length > 0;
+      return x.highPrioOpen.length > 0;
+    });
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#F4F4F5] text-zinc-900" style={{ fontSize: 13 }}>
@@ -203,7 +214,7 @@ export default async function TodoColumnsPage({ searchParams }: PageProps) {
         </header>
 
         <div className="todos-board-scroll flex flex-1 items-start gap-[10px] overflow-x-auto overflow-y-hidden p-[14px]">
-          {filteredCampaigns.map(({ campaign, filteredTasks }) => {
+          {filteredCampaigns.map(({ campaign, overdue, todayOrFuture, completed }) => {
             const health = healthTone(campaign.health_score);
             const thisWeekMeetings = campaign.activity_logs.reduce((s, l) => s + l.meetings_booked, 0);
             const meetPct =
@@ -223,8 +234,16 @@ export default async function TodoColumnsPage({ searchParams }: PageProps) {
               .slice(0, 7);
             const checklistDone = checklistItems.filter((i) => i.completed).length;
 
-            const shownOverdue = filteredTasks.filter((t) => t.due_date < today);
-            const shownTodayFuture = filteredTasks.filter((t) => t.due_date >= today);
+            const shownOverdue = overdue;
+            const shownTodayFuture = todayOrFuture;
+            const shownCompleted = completed
+              .slice()
+              .sort((a, b) => {
+                const aTime = a.completed_at ? a.completed_at.getTime() : 0;
+                const bTime = b.completed_at ? b.completed_at.getTime() : 0;
+                return bTime - aTime;
+              })
+              .slice(0, 6);
 
             return (
               <div
@@ -269,7 +288,7 @@ export default async function TodoColumnsPage({ searchParams }: PageProps) {
                     </div>
                   )}
 
-                  {(shownTodayFuture.length > 0 || (shownOverdue.length === 0 && filteredTasks.length === 0)) && (
+                  {(shownTodayFuture.length > 0 || (shownOverdue.length === 0 && shownCompleted.length === 0)) && (
                     <div className="overflow-hidden rounded-[6px] border border-[#E4E4E7]">
                       <div className="flex items-center gap-[5px] border-b border-[#F4F4F5] bg-[#FAFAFA] px-[9px] py-[5px]">
                         <span className="flex h-[15px] w-[15px] items-center justify-center rounded-[3px] bg-[rgba(55,138,221,0.08)] text-[9px] text-[#185FA5]">
@@ -284,6 +303,21 @@ export default async function TodoColumnsPage({ searchParams }: PageProps) {
                       {shownTodayFuture.length === 0 && (
                         <p className="px-[9px] py-[7px] text-[10px] text-[#A1A1AA]">Inga tasks i urvalet.</p>
                       )}
+                    </div>
+                  )}
+
+                  {shownCompleted.length > 0 && (
+                    <div className="overflow-hidden rounded-[6px] border border-[#E4E4E7]">
+                      <div className="flex items-center gap-[5px] border-b border-[#F4F4F5] bg-[#FAFAFA] px-[9px] py-[5px]">
+                        <span className="flex h-[15px] w-[15px] items-center justify-center rounded-[3px] bg-[rgba(29,158,117,0.1)] text-[9px] text-[#1D9E75]">
+                          ✓
+                        </span>
+                        <span className="text-[9px] text-[#71717A]">Klar</span>
+                        <span className="ml-auto text-[9px] text-[#71717A]">{shownCompleted.length}</span>
+                      </div>
+                      {shownCompleted.map((task) => (
+                        <TaskItem key={task.task_id} task={task} today={today} />
+                      ))}
                     </div>
                   )}
                 </div>
