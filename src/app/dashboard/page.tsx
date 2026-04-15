@@ -107,6 +107,12 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           where: { date: { gte: prevWeekStart, lte: today } },
           select: { date: true, meetings_booked: true },
         },
+        weekly_reports: {
+          where: { year: today.getFullYear() },
+          select: { week_number: true, status: true },
+          orderBy: { week_number: "desc" },
+          take: 2,
+        },
         tasks: {
           where: { status: { in: ["open", "in_progress"] }, due_date: { lt: today } },
           select: { task_id: true, priority: true },
@@ -260,13 +266,32 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             )}
           </p>
           <div className="grid grid-cols-3 gap-[10px] max-lg:grid-cols-2">
-            {cards.map(({ c, thisWeek }) => {
+            {cards.map(({ c, thisWeek, overdueHighPrio }) => {
               const weekPct = c.weekly_meeting_target > 0 ? Math.min(100, Math.round((thisWeek / c.weekly_meeting_target) * 100)) : 0;
               const mtdPct = c.monthly_meeting_target > 0
                 ? Math.min(100, Math.round((c.meetings_booked_mtd / c.monthly_meeting_target) * 100))
                 : 0;
               const hl = healthLevel(c.health_score);
-              const warningCount = hl === "red" ? 4 : 2;
+              // Real warning count: overdue high-prio tasks + activity gap + unsent report
+              const overdueHigh = overdueHighPrio;
+              const hasActivityGap = (() => {
+                let gaps = 0;
+                for (let i = 1; i <= 5; i++) {
+                  const d = new Date(today);
+                  d.setDate(d.getDate() - i);
+                  const dow = d.getDay();
+                  if (dow === 0 || dow === 6) continue; // skip weekends
+                  const hasLog = c.activity_logs.some(
+                    (l) => new Date(l.date).toDateString() === d.toDateString()
+                  );
+                  if (!hasLog) gaps++;
+                  if (gaps >= 2) return true;
+                }
+                return false;
+              })();
+              const reportMissing = c.status === "active" &&
+                !c.weekly_reports.some((r) => r.status === "sent");
+              const warningCount = overdueHigh + (hasActivityGap ? 1 : 0) + (reportMissing ? 1 : 0);
               const daysLeft = daysToTuesday(today);
               const reportText = daysLeft === 0 ? "idag" : `${daysLeft} ${daysLeft === 1 ? "dag" : "dagar"}`;
               return (
@@ -324,7 +349,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                         </span>
                       ) : (
                         <span className="shrink-0 rounded-[10px] bg-[rgba(226,75,74,0.1)] px-[7px] py-[2px] text-[9px] font-medium leading-tight text-[#A32D2D]">
-                          {warningCount} varningar
+                          {warningCount > 0 ? `${warningCount} varningar` : "Kräver åtgärd"}
                         </span>
                       )}
                     </div>
