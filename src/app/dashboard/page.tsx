@@ -1,5 +1,7 @@
 import { CampaignStatus } from "@prisma/client";
 import Link from "next/link";
+import CampaignCardActions from "@/components/CampaignCardActions";
+import DashboardFilters from "@/components/DashboardFilters";
 import { prisma } from "@/lib/prisma";
 
 type HealthLevel = "green" | "yellow" | "red";
@@ -64,7 +66,7 @@ function daysToTuesday(date: Date): number {
 type FilterType = "alla" | "aktiva" | "atgard";
 
 interface PageProps {
-  searchParams?: Promise<{ filter?: string }>;
+  searchParams?: Promise<{ filter?: string; search?: string; market?: string; health?: string }>;
 }
 
 export default async function DashboardPage({ searchParams }: PageProps) {
@@ -72,6 +74,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const activeFilter: FilterType =
     sp?.filter === "aktiva" ? "aktiva" :
     sp?.filter === "atgard" ? "atgard" : "alla";
+  const activeSearch = sp?.search?.trim() ?? "";
+  const activeMarket = sp?.market ?? "";
+  const activeHealth = sp?.health ?? "";
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -124,11 +129,13 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return { c, thisWeek, lastWeek, overdueHighPrio, needsAction };
   });
 
-  const cards = activeFilter === "aktiva"
-    ? allCards.filter((x) => x.c.status === "active")
-    : activeFilter === "atgard"
-    ? allCards.filter((x) => x.needsAction)
-    : allCards;
+  const distinctMarkets = Array.from(new Set(campaigns.map((c) => c.market))).sort();
+
+  const cards = allCards
+    .filter((x) => activeFilter === "alla" || (activeFilter === "aktiva" ? x.c.status === "active" : x.needsAction))
+    .filter((x) => !activeSearch || x.c.client_name.toLowerCase().includes(activeSearch.toLowerCase()))
+    .filter((x) => !activeMarket || x.c.market === activeMarket)
+    .filter((x) => !activeHealth || healthLevel(x.c.health_score) === activeHealth);
 
   const totalThis  = cards.reduce((s, x) => s + x.thisWeek, 0);
   const totalLast  = cards.reduce((s, x) => s + x.lastWeek, 0);
@@ -189,28 +196,18 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             <p className="text-[14px] font-medium text-[#18181B] leading-tight">Kampanjöversikt</p>
             <p className="text-[11px] text-zinc-400 leading-tight mt-[1px]">{dateLabel}</p>
           </div>
-          <div className="flex gap-[6px]">
-            {([
-              { label: "Alla",           filter: "alla",   count: allCards.length },
-              { label: "Aktiva",         filter: "aktiva", count: allCards.filter(x => x.c.status === "active").length },
-              { label: "⚠ Kräver åtgärd", filter: "atgard", count: allCards.filter(x => x.needsAction).length },
-            ] as const).map(({ label, filter, count }) => {
-              const isActive = activeFilter === filter;
-              return (
-                <Link key={filter} href={filter === "alla" ? "/dashboard" : `/dashboard?filter=${filter}`}
-                  className={`rounded-[6px] px-[10px] py-[5px] text-[11px] border leading-tight ${
-                    isActive
-                      ? "border-[#1D9E75] bg-[rgba(29,158,117,0.07)] text-[#1D9E75]"
-                      : "border-zinc-200 bg-[#F4F4F5] text-zinc-500 hover:border-zinc-300"
-                  }`}>
-                  {label}
-                  {count !== allCards.length && (
-                    <span className="ml-1 text-[10px] opacity-70">({count})</span>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
+          <DashboardFilters
+            markets={distinctMarkets}
+            activeFilter={activeFilter}
+            activeSearch={activeSearch}
+            activeMarket={activeMarket}
+            activeHealth={activeHealth}
+            counts={{
+              alla:   allCards.length,
+              aktiva: allCards.filter((x) => x.c.status === "active").length,
+              atgard: allCards.filter((x) => x.needsAction).length,
+            }}
+          />
         </header>
 
         {/* STATS ROW — 4 separate white cards */}
@@ -256,7 +253,12 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
         {/* CAMPAIGN GRID */}
         <div className="flex-1 overflow-y-auto px-5 pb-5">
-          <p className="mb-[10px] text-[11px] font-medium uppercase tracking-[0.5px] text-zinc-500">Aktiva kampanjer</p>
+          <p className="mb-[10px] text-[11px] font-medium uppercase tracking-[0.5px] text-zinc-500">
+            {cards.length} kampanj{cards.length !== 1 ? "er" : ""}
+            {(activeSearch || activeMarket || activeHealth) && (
+              <span className="ml-1 normal-case text-zinc-400 font-normal">· filtrerat</span>
+            )}
+          </p>
           <div className="grid grid-cols-3 gap-[10px] max-lg:grid-cols-2">
             {cards.map(({ c, thisWeek }) => {
               const weekPct = c.weekly_meeting_target > 0 ? Math.min(100, Math.round((thisWeek / c.weekly_meeting_target) * 100)) : 0;
@@ -268,63 +270,67 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               const daysLeft = daysToTuesday(today);
               const reportText = daysLeft === 0 ? "idag" : `${daysLeft} ${daysLeft === 1 ? "dag" : "dagar"}`;
               return (
-                <Link key={c.campaign_id} href={`/dashboard/${c.campaign_id}`}
-                  className="block cursor-pointer rounded-[10px] border border-zinc-200 bg-white p-[14px] transition hover:border-zinc-400 hover:shadow-sm">
-
-                  {/* ROW 1: name + health dot */}
-                  <div className="flex items-start justify-between mb-[10px]">
-                    <div>
-                      <p className="text-[13px] font-medium text-[#18181B] leading-tight">{c.client_name}</p>
-                      <p className="text-[10px] text-zinc-400 leading-tight mt-[2px]">{c.market.replace(/\//g, " · ")}</p>
+                <div
+                  key={c.campaign_id}
+                  className="rounded-[10px] border border-zinc-200 bg-white p-[14px] transition hover:border-zinc-400 hover:shadow-sm"
+                >
+                  <Link href={`/dashboard/${c.campaign_id}`} className="block cursor-pointer">
+                    {/* ROW 1: name + health dot */}
+                    <div className="flex items-start justify-between mb-[10px]">
+                      <div>
+                        <p className="text-[13px] font-medium text-[#18181B] leading-tight">{c.client_name}</p>
+                        <p className="text-[10px] text-zinc-400 leading-tight mt-[2px]">{c.market.replace(/\//g, " · ")}</p>
+                      </div>
+                      <span className={`mt-[3px] h-2 w-2 shrink-0 rounded-full ${healthCls(hl)}`} />
                     </div>
-                    <span className={`mt-[3px] h-2 w-2 shrink-0 rounded-full ${healthCls(hl)}`} />
-                  </div>
 
-                  {/* ROW 2: channels */}
-                  <div className="flex items-center gap-[4px] mb-[10px]">
-                    {c.channels_enabled.map((ch) => {
-                      const { label, cls } = CHANNEL_LABELS[ch] ?? { label: ch, cls: "bg-zinc-100 text-zinc-500" };
-                      return <span key={ch} className={`shrink-0 rounded-[4px] px-[6px] py-[2px] text-[9px] font-medium leading-tight ${cls}`}>{label}</span>;
-                    })}
-                  </div>
+                    {/* ROW 2: channels */}
+                    <div className="flex items-center gap-[4px] mb-[10px]">
+                      {c.channels_enabled.map((ch) => {
+                        const { label, cls } = CHANNEL_LABELS[ch] ?? { label: ch, cls: "bg-zinc-100 text-zinc-500" };
+                        return <span key={ch} className={`shrink-0 rounded-[4px] px-[6px] py-[2px] text-[9px] font-medium leading-tight ${cls}`}>{label}</span>;
+                      })}
+                    </div>
 
-                  {/* ROW 3: metric boxes */}
-                  <div className="grid grid-cols-2 gap-[6px] mb-[10px]">
-                    <div className="rounded-[6px] bg-[#F4F4F5] px-[9px] py-[7px]">
-                      <p className="text-[9px] text-zinc-500 leading-tight mb-[2px]">Möten veckan</p>
-                      <p className="text-[14px] font-medium text-[#18181B] leading-tight">{thisWeek}</p>
-                      <p className="text-[9px] text-zinc-500 leading-tight mt-[1px]">mål: {c.weekly_meeting_target}</p>
-                      <div className="mt-[4px] h-[3px] w-full rounded-full bg-zinc-200">
-                        <div className={`h-full rounded-full ${barCls(weekPct)}`} style={{ width: `${weekPct}%` }} />
+                    {/* ROW 3: metric boxes */}
+                    <div className="grid grid-cols-2 gap-[6px] mb-[10px]">
+                      <div className="rounded-[6px] bg-[#F4F4F5] px-[9px] py-[7px]">
+                        <p className="text-[9px] text-zinc-500 leading-tight mb-[2px]">Möten veckan</p>
+                        <p className="text-[14px] font-medium text-[#18181B] leading-tight">{thisWeek}</p>
+                        <p className="text-[9px] text-zinc-500 leading-tight mt-[1px]">mål: {c.weekly_meeting_target}</p>
+                        <div className="mt-[4px] h-[3px] w-full rounded-full bg-zinc-200">
+                          <div className={`h-full rounded-full ${barCls(weekPct)}`} style={{ width: `${weekPct}%` }} />
+                        </div>
+                      </div>
+
+                      <div className="rounded-[6px] bg-[#F4F4F5] px-[9px] py-[7px]">
+                        <p className="text-[9px] text-zinc-500 leading-tight mb-[2px]">MTD-möten</p>
+                        <p className="text-[14px] font-medium text-[#18181B] leading-tight">{c.meetings_booked_mtd}</p>
+                        <p className="text-[9px] text-zinc-500 leading-tight mt-[1px]">mål: {c.monthly_meeting_target}</p>
+                        <div className="mt-[4px] h-[3px] w-full rounded-full bg-zinc-200">
+                          <div className={`h-full rounded-full ${barCls(mtdPct)}`} style={{ width: `${mtdPct}%` }} />
+                        </div>
                       </div>
                     </div>
 
-                    <div className="rounded-[6px] bg-[#F4F4F5] px-[9px] py-[7px]">
-                      <p className="text-[9px] text-zinc-500 leading-tight mb-[2px]">MTD-möten</p>
-                      <p className="text-[14px] font-medium text-[#18181B] leading-tight">{c.meetings_booked_mtd}</p>
-                      <p className="text-[9px] text-zinc-500 leading-tight mt-[1px]">mål: {c.monthly_meeting_target}</p>
-                      <div className="mt-[4px] h-[3px] w-full rounded-full bg-zinc-200">
-                        <div className={`h-full rounded-full ${barCls(mtdPct)}`} style={{ width: `${mtdPct}%` }} />
-                      </div>
+                    {/* ROW 4: footer */}
+                    <div className="flex items-center justify-between border-t border-[#F4F4F5] pt-[9px]">
+                      <p className="text-[10px] text-zinc-500">
+                        Rapport om <span className={`font-medium ${daysLeft === 0 ? "text-[#E24B4A]" : "text-[#EF9F27]"}`}>{reportText}</span>
+                      </p>
+                      {hl === "green" ? (
+                        <span className={`shrink-0 rounded-[10px] px-[7px] py-[2px] text-[9px] font-medium leading-tight ${STATUS_CLS[c.status]}`}>
+                          {STATUS_LABELS[c.status]}
+                        </span>
+                      ) : (
+                        <span className="shrink-0 rounded-[10px] bg-[rgba(226,75,74,0.1)] px-[7px] py-[2px] text-[9px] font-medium leading-tight text-[#A32D2D]">
+                          {warningCount} varningar
+                        </span>
+                      )}
                     </div>
-                  </div>
-
-                  {/* ROW 4: footer */}
-                  <div className="flex items-center justify-between border-t border-[#F4F4F5] pt-[9px]">
-                    <p className="text-[10px] text-zinc-500">
-                      Rapport om <span className={`font-medium ${daysLeft === 0 ? "text-[#E24B4A]" : "text-[#EF9F27]"}`}>{reportText}</span>
-                    </p>
-                    {hl === "green" ? (
-                      <span className={`shrink-0 rounded-[10px] px-[7px] py-[2px] text-[9px] font-medium leading-tight ${STATUS_CLS[c.status]}`}>
-                        {STATUS_LABELS[c.status]}
-                      </span>
-                    ) : (
-                      <span className="shrink-0 rounded-[10px] bg-[rgba(226,75,74,0.1)] px-[7px] py-[2px] text-[9px] font-medium leading-tight text-[#A32D2D]">
-                        {warningCount} varningar
-                      </span>
-                    )}
-                  </div>
-                </Link>
+                  </Link>
+                  <CampaignCardActions campaignId={c.campaign_id} clientName={c.client_name} />
+                </div>
               );
             })}
           </div>
