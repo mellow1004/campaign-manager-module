@@ -2,6 +2,10 @@ import { CampaignStatus, TaskPriority, TaskStatus } from "@prisma/client";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import TasksTab from "@/components/TasksTab";
+import ChecklistsTab from "@/components/ChecklistsTab";
+import ActivityLogForm from "@/components/ActivityLogForm";
+import ReportsTab from "@/components/ReportsTab";
 
 type TabId = "oversikt" | "aktivitet" | "icp" | "tasks" | "checklistor" | "rapporter";
 
@@ -125,6 +129,32 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
 
   const reportDaysLeft = daysToTuesday(today);
   const icp = campaign.icps[0] ?? null;
+
+  // Today's log (if any) for activity form pre-fill
+  const todayLog = campaign.activity_logs.find(
+    (l) => new Date(l.date).toDateString() === today.toDateString()
+  ) ?? null;
+  const todayStr = today.toISOString().split("T")[0];
+
+  // ISO week number for today
+  function getIsoWeek(date: Date): number {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+    const y = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil(((d.getTime() - y.getTime()) / 86400000 + 1) / 7);
+  }
+  const currentWeekNumber = getIsoWeek(today);
+  const currentYear = today.getFullYear();
+
+  // This week's activity for report generation
+  const thisWeekActivity = {
+    dials:              campaign.activity_logs.filter(l => l.date >= weekStart).reduce((s, l) => s + l.dials, 0),
+    connects:           campaign.activity_logs.filter(l => l.date >= weekStart).reduce((s, l) => s + l.connects, 0),
+    emails_sent:        campaign.activity_logs.filter(l => l.date >= weekStart).reduce((s, l) => s + l.emails_sent, 0),
+    replies:            campaign.activity_logs.filter(l => l.date >= weekStart).reduce((s, l) => s + l.replies, 0),
+    linkedin_requests:  campaign.activity_logs.filter(l => l.date >= weekStart).reduce((s, l) => s + l.linkedin_requests, 0),
+    linkedin_accepted:  campaign.activity_logs.filter(l => l.date >= weekStart).reduce((s, l) => s + l.linkedin_accepted, 0),
+  };
 
   // Group activity logs by ISO week
   type WeekGroup = {
@@ -307,6 +337,19 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
           {/* ── AKTIVITET ── */}
           {activeTab === "aktivitet" && (
             <div className="space-y-3">
+              <ActivityLogForm
+                campaignId={campaign.campaign_id}
+                todayStr={todayStr}
+                todayLog={todayLog ? {
+                  dials:              todayLog.dials,
+                  connects:           todayLog.connects,
+                  emails_sent:        todayLog.emails_sent,
+                  replies:            todayLog.replies,
+                  linkedin_requests:  todayLog.linkedin_requests,
+                  linkedin_accepted:  todayLog.linkedin_accepted,
+                  meetings_booked:    todayLog.meetings_booked,
+                } : null}
+              />
               <div className="rounded-[8px] border border-zinc-200 bg-white overflow-hidden">
                 <div className="border-b border-zinc-100 px-4 py-[8px] flex items-center justify-between">
                   <p className="text-[12px] font-medium text-zinc-700">Aktivitetslogg</p>
@@ -498,171 +541,72 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
 
           {/* ── TASKS ── */}
           {activeTab === "tasks" && (
-            <div className="grid grid-cols-3 gap-3">
-              {([
-                { key: "open",        label: "Öppen",   tasks: openTasks,       headerCls: "bg-zinc-50" },
-                { key: "in_progress", label: "Pågår",   tasks: inProgressTasks, headerCls: "bg-amber-50" },
-                { key: "done",        label: "Klar",    tasks: doneTasks,       headerCls: "bg-[rgba(29,158,117,0.07)]" },
-              ] as const).map((col) => (
-                <div key={col.key} className="rounded-[8px] border border-zinc-200 bg-white overflow-hidden">
-                  <div className={`border-b border-zinc-100 px-3 py-[8px] flex items-center justify-between ${col.headerCls}`}>
-                    <p className="text-[12px] font-medium text-zinc-700">{col.label}</p>
-                    <span className="rounded-full bg-zinc-200 px-[7px] py-[1px] text-[10px] text-zinc-600">{col.tasks.length}</span>
-                  </div>
-                  <div className="space-y-[1px] p-2">
-                    {col.tasks.length === 0 && (
-                      <p className="py-3 text-center text-[11px] text-zinc-400">Inga tasks</p>
-                    )}
-                    {col.tasks.map((task) => {
-                      const isOverdue = task.due_date < today && task.status !== "done";
-                      return (
-                        <div key={task.task_id} className="rounded-[6px] border border-zinc-100 bg-zinc-50 p-[8px] hover:border-zinc-200">
-                          <p className="text-[12px] font-medium text-zinc-900 leading-tight mb-[4px]">{task.title}</p>
-                          {task.description && (
-                            <p className="text-[10px] text-zinc-400 leading-tight mb-[6px] line-clamp-2">{task.description}</p>
-                          )}
-                          <div className="flex items-center gap-1 flex-wrap">
-                            <span className={`rounded-[4px] px-[5px] py-[1px] text-[9px] font-medium ${PRIORITY_CLS[task.priority]}`}>
-                              {PRIORITY_LABELS[task.priority]}
-                            </span>
-                            <span className={`text-[9px] ${isOverdue ? "text-[#E24B4A] font-medium" : "text-zinc-400"}`}>
-                              {isOverdue ? "⚠ " : ""}Förfall {fmtShort(task.due_date)}
-                            </span>
-                            <span className="ml-auto text-[9px] text-zinc-400">{task.assigned_to.name}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <TasksTab
+              tasks={campaign.tasks.map((t) => ({
+                ...t,
+                due_date: t.due_date,
+              }))}
+              campaignId={campaign.campaign_id}
+              pmId={campaign.assigned_pm_id}
+            />
           )}
 
           {/* ── CHECKLISTOR ── */}
           {activeTab === "checklistor" && (
-            <div className="space-y-3">
-              {campaign.checklist_instances.length === 0 ? (
-                <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-6 text-center text-[12px] text-zinc-400">
-                  Inga checklistor skapade för denna kampanj.
-                </div>
-              ) : (
-                campaign.checklist_instances.map((inst) => {
-                  const items = inst.items as Array<{
-                    order: number;
-                    title: string;
-                    description?: string;
-                    is_blocking?: boolean;
-                    completed?: boolean;
-                    completed_at?: string;
-                  }>;
-                  const completedCount = items.filter((i) => i.completed).length;
-                  return (
-                    <div key={inst.instance_id} className="rounded-[8px] border border-zinc-200 bg-white overflow-hidden">
-                      <div className="border-b border-zinc-100 px-4 py-[8px] flex items-center justify-between bg-zinc-50">
-                        <div className="flex items-center gap-2">
-                          <p className="text-[12px] font-medium text-zinc-700">{inst.template.name}</p>
-                          {inst.week_number && (
-                            <span className="text-[10px] text-zinc-400">v.{inst.week_number}</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="h-[3px] w-[60px] rounded-full bg-zinc-200">
-                            <div
-                              className={`h-full rounded-full ${inst.completion_pct < 40 ? "bg-[#E24B4A]" : inst.completion_pct < 75 ? "bg-[#EF9F27]" : "bg-[#1D9E75]"}`}
-                              style={{ width: `${inst.completion_pct}%` }}
-                            />
-                          </div>
-                          <span className="text-[10px] text-zinc-500">{completedCount}/{items.length}</span>
-                        </div>
-                      </div>
-                      <div>
-                        {items.sort((a,b)=>a.order-b.order).map((item, ii) => (
-                          <div key={item.order} className={`flex items-start gap-3 px-4 py-[8px] border-b border-zinc-50 last:border-0 ${ii % 2 === 1 ? "bg-[#FAFAFA]" : ""}`}>
-                            <div className={`mt-[1px] h-[14px] w-[14px] shrink-0 rounded-[3px] border-2 flex items-center justify-center ${item.completed ? "bg-[#1D9E75] border-[#1D9E75]" : "border-zinc-300"}`}>
-                              {item.completed && <span className="text-white text-[8px] font-bold">✓</span>}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1">
-                                <p className={`text-[12px] leading-tight ${item.completed ? "line-through text-zinc-400" : "text-zinc-900"}`}>
-                                  {item.title}
-                                </p>
-                                {item.is_blocking && !item.completed && (
-                                  <span className="text-[10px]" title="Blockerande item">🔒</span>
-                                )}
-                              </div>
-                              {item.description && (
-                                <p className="text-[10px] text-zinc-400 leading-tight mt-[2px]">{item.description}</p>
-                              )}
-                            </div>
-                            {item.completed_at && (
-                              <span className="shrink-0 text-[9px] text-zinc-400">{fmtShort(new Date(item.completed_at))}</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
+            <ChecklistsTab
+              instances={campaign.checklist_instances.map((inst) => ({
+                instance_id:    inst.instance_id,
+                completion_pct: inst.completion_pct,
+                week_number:    inst.week_number,
+                items: (inst.items as Array<{
+                  order: number;
+                  title: string;
+                  description?: string;
+                  is_blocking?: boolean;
+                  completed?: boolean;
+                  completed_at?: string | null;
+                }>).map((i) => ({
+                  order:        i.order,
+                  title:        i.title,
+                  description:  i.description,
+                  is_blocking:  i.is_blocking,
+                  completed:    i.completed ?? false,
+                  completed_at: i.completed_at ?? null,
+                })),
+                template: { type: inst.template.type, name: inst.template.name },
+              }))}
+            />
           )}
 
           {/* ── RAPPORTER ── */}
           {activeTab === "rapporter" && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-[11px] font-medium uppercase tracking-[0.4px] text-zinc-400">
-                  {campaign.weekly_reports.length} rapporter totalt
-                </p>
-                <button className="rounded-[6px] border border-[#1D9E75] bg-[rgba(29,158,117,0.07)] px-[10px] py-[5px] text-[11px] text-[#1D9E75] font-medium">
-                  + Generera rapport
-                </button>
-              </div>
-
-              {campaign.weekly_reports.length === 0 ? (
-                <div className="rounded-[8px] border border-zinc-200 bg-white px-4 py-6 text-center text-[12px] text-zinc-400">
-                  Inga rapporter genererade än.
-                </div>
-              ) : (
-                <div className="rounded-[8px] border border-zinc-200 bg-white overflow-hidden">
-                  <table className="w-full text-[12px]">
-                    <thead>
-                      <tr className="border-b border-zinc-100 bg-zinc-50">
-                        {["Vecka","Period","Möten","MTD","Status","Skickad",""].map((h) => (
-                          <th key={h} className="px-4 py-[7px] text-left font-medium text-zinc-500 text-[10px]">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {campaign.weekly_reports.map((report, ri) => (
-                        <tr key={report.report_id} className={`border-b border-zinc-50 hover:bg-zinc-50 ${ri % 2 === 1 ? "bg-[#FAFAFA]" : ""}`}>
-                          <td className="px-4 py-[7px] font-medium text-zinc-900">v.{report.week_number} {report.year}</td>
-                          <td className="px-4 py-[7px] text-zinc-500">–</td>
-                          <td className="px-4 py-[7px] font-medium">{report.meetings_week}</td>
-                          <td className="px-4 py-[7px] text-zinc-600">{report.meetings_mtd}</td>
-                          <td className="px-4 py-[7px]">
-                            <span className={`rounded-[6px] px-[6px] py-[2px] text-[10px] font-medium ${
-                              report.status === "sent"
-                                ? "bg-[rgba(29,158,117,0.1)] text-[#0F6E56]"
-                                : "bg-amber-100 text-amber-700"
-                            }`}>
-                              {report.status === "sent" ? "Skickad" : "Utkast"}
-                            </span>
-                          </td>
-                          <td className="px-4 py-[7px] text-zinc-400 text-[11px]">
-                            {report.sent_at ? fmtShort(new Date(report.sent_at)) : "–"}
-                          </td>
-                          <td className="px-4 py-[7px]">
-                            <button className="text-[11px] text-zinc-400 hover:text-zinc-700">Visa →</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+            <ReportsTab
+              reports={campaign.weekly_reports.map((r) => ({
+                report_id:      r.report_id,
+                week_number:    r.week_number,
+                year:           r.year,
+                status:         r.status,
+                meetings_week:  r.meetings_week,
+                meetings_mtd:   r.meetings_mtd,
+                meetings_total: r.meetings_total,
+                ai_commentary:  r.ai_commentary,
+                pm_commentary:  r.pm_commentary,
+                next_week_focus: r.next_week_focus,
+                sent_at:        r.sent_at ? r.sent_at.toISOString() : null,
+              }))}
+              campaignId={campaign.campaign_id}
+              pmId={campaign.assigned_pm_id}
+              clientName={campaign.client_name}
+              market={campaign.market}
+              currentWeekNumber={currentWeekNumber}
+              currentYear={currentYear}
+              weeklyMeetingTarget={campaign.weekly_meeting_target}
+              monthlyMeetingTarget={campaign.monthly_meeting_target}
+              thisWeekActivity={thisWeekActivity}
+              meetingsWeek={meetingsWeek}
+              meetingsMtd={meetingsMtd}
+              currentFocus={icp?.current_focus ?? ""}
+            />
           )}
 
         </div>
