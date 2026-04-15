@@ -1,7 +1,5 @@
 import { CampaignStatus } from "@prisma/client";
 import Link from "next/link";
-import CampaignCardActions from "@/components/CampaignCardActions";
-import DashboardFilters from "@/components/DashboardFilters";
 import { prisma } from "@/lib/prisma";
 
 type HealthLevel = "green" | "yellow" | "red";
@@ -55,12 +53,11 @@ function barCls(pct: number) {
   return pct < 40 ? "bg-[#E24B4A]" : pct < 75 ? "bg-[#EF9F27]" : "bg-[#1D9E75]";
 }
 
+/** Dagar till nästa rapportdeadline (tisdag). På tisdag = 0 → visa "idag" som i mockup 01. */
 function daysToTuesday(date: Date): number {
   const d = date.getDay();
-  // If today is Tuesday (d===2) return 7 so it says "7 dagar" (next week's deadline),
-  // not 0 (which made it look like every single report was due "today")
   const raw = (2 - d + 7) % 7;
-  return raw === 0 ? 7 : raw;
+  return raw;
 }
 
 type FilterType = "alla" | "aktiva" | "atgard";
@@ -91,7 +88,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const samePointLastWeek = new Date(prevWeekStart);
   samePointLastWeek.setDate(samePointLastWeek.getDate() + daysIntoWeek);
 
-  const [campaigns, pm] = await Promise.all([
+  const [campaigns, pm, openTodoCount] = await Promise.all([
     prisma.campaign.findMany({
       select: {
         campaign_id: true,
@@ -121,6 +118,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       orderBy: { client_name: "asc" },
     }),
     prisma.user.findFirst({ where: { role: "pm" }, select: { name: true, avatar_initials: true } }),
+    prisma.task.count({ where: { status: { in: ["open", "in_progress"] } } }),
   ]);
 
   const allCards = campaigns.map((c) => {
@@ -134,8 +132,6 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     const needsAction = c.health_score < 75 || overdueHighPrio > 0;
     return { c, thisWeek, lastWeek, overdueHighPrio, needsAction };
   });
-
-  const distinctMarkets = Array.from(new Set(campaigns.map((c) => c.market))).sort();
 
   const cards = allCards
     .filter((x) => activeFilter === "alla" || (activeFilter === "aktiva" ? x.c.status === "active" : x.needsAction))
@@ -156,30 +152,43 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const monthNames = ["januari","februari","mars","april","maj","juni","juli","augusti","september","oktober","november","december"];
   const dateLabel = `${dayNames[today.getDay()].charAt(0).toUpperCase()}${dayNames[today.getDay()].slice(1)} ${today.getDate()} ${monthNames[today.getMonth()]} ${today.getFullYear()} · v.${isoWeek(today)}`;
 
+  function filterHref(f: FilterType): string {
+    if (f === "alla") return "/dashboard";
+    return `/dashboard?filter=${f}`;
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#F4F4F5] text-zinc-900" style={{ fontSize: 13 }}>
 
-      {/* SIDEBAR */}
+      {/* SIDEBAR — match 01-dashboard.html */}
       <aside className="flex w-[200px] min-w-[200px] shrink-0 flex-col bg-[#18181B]">
-        <div className="border-b border-white/[0.07] px-4 py-3">
-          <p className="text-[15px] font-medium text-white leading-tight">Otto</p>
-          <p className="text-[10px] text-white/35 leading-tight mt-[1px]">CoSeller Suite</p>
+        <div className="border-b border-white/[0.07] px-4 pb-3 pt-[18px]">
+          <p className="text-[15px] font-medium leading-tight text-white">Otto</p>
+          <p className="mt-[1px] text-[10px] leading-tight text-white/35">CoSeller Suite</p>
         </div>
-        <nav className="flex-1 space-y-[2px] px-2 py-3">
+        <nav className="flex-1 space-y-[2px] px-2 py-[12px]">
           {[
-            { label: "▦ Dashboard", active: true, badge: null },
-            { label: "◈ Kampanjer", active: false, badge: campaigns.length },
-            { label: "✓ Mina todos", active: false, badge: 5 },
-            { label: "↗ Rapporter", active: false, badge: null },
-            { label: "≡ Checklistor", active: false, badge: null },
-            { label: "⚙ ICP-bibliotek", active: false, badge: null },
-          ].map(({ label, active, badge }) => (
-            <div key={label} className={`flex items-center gap-2 rounded-[6px] px-[10px] py-2 text-[12px] leading-tight cursor-pointer ${active ? "bg-[rgba(29,158,117,0.2)] text-[#3ECFA0]" : "text-white/45"}`}>
+            { label: "▦ Dashboard", href: "/dashboard", active: true, badge: null as number | null },
+            { label: "◈ Kampanjer", href: "/dashboard", active: false, badge: campaigns.length },
+            { label: "✓ Mina todos", href: "/todos", active: false, badge: openTodoCount },
+            { label: "↗ Rapporter", href: "#", active: false, badge: null },
+            { label: "≡ Checklistor", href: "#", active: false, badge: null },
+            { label: "⚙ ICP-bibliotek", href: "#", active: false, badge: null },
+          ].map(({ label, href, active, badge }) => (
+            <Link
+              key={label}
+              href={href}
+              className={`flex cursor-pointer items-center gap-2 rounded-[6px] px-[10px] py-2 text-[12px] leading-tight ${
+                active ? "bg-[rgba(29,158,117,0.2)] text-[#3ECFA0]" : "text-white/45 hover:text-white/60"
+              }`}
+            >
               {label}
               {badge !== null && (
-                <span className="ml-auto rounded-[10px] bg-[rgba(226,75,74,0.25)] px-[6px] py-[1px] text-[10px] text-[#F09595]">{badge}</span>
+                <span className="ml-auto rounded-[10px] bg-[rgba(226,75,74,0.25)] px-[6px] py-[1px] text-[10px] text-[#F09595]">
+                  {badge}
+                </span>
               )}
-            </div>
+            </Link>
           ))}
         </nav>
         <div className="flex items-center gap-2 border-t border-white/[0.07] px-[14px] py-3">
@@ -196,24 +205,36 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       {/* MAIN */}
       <main className="flex flex-1 flex-col overflow-hidden">
 
-        {/* TOPBAR */}
-        <header className="flex h-[50px] shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-5">
+        {/* TOPBAR — 01-dashboard.html (endast tre filterknappar) */}
+        <header className="flex h-[50px] shrink-0 items-center justify-between border-b border-[#E4E4E7] bg-white px-5">
           <div>
-            <p className="text-[14px] font-medium text-[#18181B] leading-tight">Kampanjöversikt</p>
-            <p className="text-[11px] text-zinc-400 leading-tight mt-[1px]">{dateLabel}</p>
+            <p className="text-[14px] font-medium leading-tight text-[#18181B]">Kampanjöversikt</p>
+            <p className="mt-[1px] text-[11px] leading-tight text-[#71717A]">{dateLabel}</p>
           </div>
-          <DashboardFilters
-            markets={distinctMarkets}
-            activeFilter={activeFilter}
-            activeSearch={activeSearch}
-            activeMarket={activeMarket}
-            activeHealth={activeHealth}
-            counts={{
-              alla:   allCards.length,
-              aktiva: allCards.filter((x) => x.c.status === "active").length,
-              atgard: allCards.filter((x) => x.needsAction).length,
-            }}
-          />
+          <div className="flex gap-[6px]">
+            {(
+              [
+                { id: "alla" as const, label: "Alla" },
+                { id: "aktiva" as const, label: "Aktiva" },
+                { id: "atgard" as const, label: "⚠ Kräver åtgärd" },
+              ] as const
+            ).map(({ id, label }) => {
+              const on = activeFilter === id;
+              return (
+                <Link
+                  key={id}
+                  href={filterHref(id)}
+                  className={`cursor-pointer rounded-[6px] border px-[10px] py-[5px] text-[11px] leading-tight ${
+                    on
+                      ? "border-[#1D9E75] bg-[rgba(29,158,117,0.07)] text-[#1D9E75]"
+                      : "border-[#E4E4E7] bg-[#F4F4F5] text-[#71717A] hover:border-[#D4D4D8]"
+                  }`}
+                >
+                  {label}
+                </Link>
+              );
+            })}
+          </div>
         </header>
 
         {/* STATS ROW — 4 separate white cards */}
@@ -249,8 +270,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               subCls: "text-zinc-500",
             },
           ].map(({ label, val, sub, subCls, valCls }) => (
-            <div key={label} className="rounded-[8px] border border-zinc-200 bg-white px-[14px] py-[10px]">
-              <p className="text-[10px] uppercase tracking-[0.4px] text-zinc-500 leading-tight">{label}</p>
+            <div key={label} className="rounded-[8px] border border-[#E4E4E7] bg-white px-[14px] py-[10px]">
+              <p className="text-[10px] uppercase leading-tight tracking-[0.4px] text-[#71717A]">{label}</p>
               <p className={`mt-1 text-[20px] font-medium leading-tight ${valCls ?? "text-[#18181B]"}`}>{val}</p>
               <p className={`mt-[3px] text-[10px] leading-tight ${subCls}`}>{sub}</p>
             </div>
@@ -259,13 +280,13 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
         {/* CAMPAIGN GRID */}
         <div className="flex-1 overflow-y-auto px-5 pb-5">
-          <p className="mb-[10px] text-[11px] font-medium uppercase tracking-[0.5px] text-zinc-500">
-            {cards.length} kampanj{cards.length !== 1 ? "er" : ""}
+          <p className="mb-[10px] pt-1 text-[11px] font-medium uppercase tracking-[0.5px] text-[#71717A]">
+            Aktiva kampanjer
             {(activeSearch || activeMarket || activeHealth) && (
-              <span className="ml-1 normal-case text-zinc-400 font-normal">· filtrerat</span>
+              <span className="ml-1 font-normal normal-case text-zinc-400">· filtrerat</span>
             )}
           </p>
-          <div className="grid grid-cols-3 gap-[10px] max-lg:grid-cols-2">
+          <div className="grid max-lg:grid-cols-2 grid-cols-3 gap-[10px]">
             {cards.map(({ c, thisWeek, overdueHighPrio }) => {
               const weekPct = c.weekly_meeting_target > 0 ? Math.min(100, Math.round((thisWeek / c.weekly_meeting_target) * 100)) : 0;
               const mtdPct = c.monthly_meeting_target > 0
@@ -293,11 +314,10 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 !c.weekly_reports.some((r) => r.status === "sent");
               const warningCount = overdueHigh + (hasActivityGap ? 1 : 0) + (reportMissing ? 1 : 0);
               const daysLeft = daysToTuesday(today);
-              const reportText = daysLeft === 0 ? "idag" : `${daysLeft} ${daysLeft === 1 ? "dag" : "dagar"}`;
               return (
                 <div
                   key={c.campaign_id}
-                  className="rounded-[10px] border border-zinc-200 bg-white p-[14px] transition hover:border-zinc-400 hover:shadow-sm"
+                  className="rounded-[10px] border border-[#E4E4E7] bg-white p-[14px] transition-colors hover:border-[#A1A1AA]"
                 >
                   <Link href={`/dashboard/${c.campaign_id}`} className="block cursor-pointer">
                     {/* ROW 1: name + health dot */}
@@ -306,7 +326,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                         <p className="text-[13px] font-medium text-[#18181B] leading-tight">{c.client_name}</p>
                         <p className="text-[10px] text-zinc-400 leading-tight mt-[2px]">{c.market.replace(/\//g, " · ")}</p>
                       </div>
-                      <span className={`mt-[3px] h-2 w-2 shrink-0 rounded-full ${healthCls(hl)}`} />
+                      <span className={`mt-[3px] h-[8px] w-[8px] shrink-0 rounded-full ${healthCls(hl)}`} />
                     </div>
 
                     {/* ROW 2: channels */}
@@ -323,8 +343,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                         <p className="text-[9px] text-zinc-500 leading-tight mb-[2px]">Möten veckan</p>
                         <p className="text-[14px] font-medium text-[#18181B] leading-tight">{thisWeek}</p>
                         <p className="text-[9px] text-zinc-500 leading-tight mt-[1px]">mål: {c.weekly_meeting_target}</p>
-                        <div className="mt-[4px] h-[3px] w-full rounded-full bg-zinc-200">
-                          <div className={`h-full rounded-full ${barCls(weekPct)}`} style={{ width: `${weekPct}%` }} />
+                        <div className="mt-[4px] h-[3px] w-full overflow-hidden rounded-[2px] bg-[#E4E4E7]">
+                          <div className={`h-full rounded-[2px] ${barCls(weekPct)}`} style={{ width: `${weekPct}%` }} />
                         </div>
                       </div>
 
@@ -332,17 +352,26 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                         <p className="text-[9px] text-zinc-500 leading-tight mb-[2px]">MTD-möten</p>
                         <p className="text-[14px] font-medium text-[#18181B] leading-tight">{c.meetings_booked_mtd}</p>
                         <p className="text-[9px] text-zinc-500 leading-tight mt-[1px]">mål: {c.monthly_meeting_target}</p>
-                        <div className="mt-[4px] h-[3px] w-full rounded-full bg-zinc-200">
-                          <div className={`h-full rounded-full ${barCls(mtdPct)}`} style={{ width: `${mtdPct}%` }} />
+                        <div className="mt-[4px] h-[3px] w-full overflow-hidden rounded-[2px] bg-[#E4E4E7]">
+                          <div className={`h-full rounded-[2px] ${barCls(mtdPct)}`} style={{ width: `${mtdPct}%` }} />
                         </div>
                       </div>
                     </div>
 
                     {/* ROW 4: footer */}
                     <div className="flex items-center justify-between border-t border-[#F4F4F5] pt-[9px]">
-                      <p className="text-[10px] text-zinc-500">
-                        Rapport om <span className={`font-medium ${daysLeft === 0 ? "text-[#E24B4A]" : "text-[#EF9F27]"}`}>{reportText}</span>
-                      </p>
+                      {daysLeft === 0 ? (
+                        <p className="text-[10px] text-[#71717A]">
+                          Rapport <span className="font-medium text-[#EF9F27]">idag</span>
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-[#71717A]">
+                          Rapport om{" "}
+                          <span className="font-medium text-[#EF9F27]">
+                            {daysLeft} {daysLeft === 1 ? "dag" : "dagar"}
+                          </span>
+                        </p>
+                      )}
                       {hl === "green" ? (
                         <span className={`shrink-0 rounded-[10px] px-[7px] py-[2px] text-[9px] font-medium leading-tight ${STATUS_CLS[c.status]}`}>
                           {STATUS_LABELS[c.status]}
@@ -354,7 +383,6 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                       )}
                     </div>
                   </Link>
-                  <CampaignCardActions campaignId={c.campaign_id} clientName={c.client_name} />
                 </div>
               );
             })}

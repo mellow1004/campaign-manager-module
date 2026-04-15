@@ -27,6 +27,12 @@ const STATUS_LABELS: Record<CampaignStatus, string> = {
   closed: "Avslutad",
 };
 
+const CHANNEL_SV: Record<string, string> = {
+  phone: "Telefon",
+  email: "Email",
+  linkedin: "LinkedIn",
+};
+
 function getWeekStart(date: Date): Date {
   const d = new Date(date);
   const day = d.getDay();
@@ -39,9 +45,9 @@ function fmtDate(d: Date): string {
   return d.toLocaleDateString("sv-SE", { day: "numeric", month: "short", year: "numeric" });
 }
 
+/** Tisdag = rapportdag → 0 (visa "idag"), i linje med mockup 02. */
 function daysToTuesday(date: Date): number {
-  const raw = (2 - date.getDay() + 7) % 7;
-  return raw === 0 ? 7 : raw;
+  return (2 - date.getDay() + 7) % 7;
 }
 
 interface PageProps {
@@ -88,6 +94,11 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
   });
 
   if (!campaign) notFound();
+
+  const [openTodoCount, campaignListCount] = await Promise.all([
+    prisma.task.count({ where: { status: { in: ["open", "in_progress"] } } }),
+    prisma.campaign.count(),
+  ]);
 
   const meetingsWeek = campaign.activity_logs
     .filter((l) => l.date >= weekStart)
@@ -190,18 +201,18 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
 
       {/* SIDEBAR */}
       <aside className="flex w-[200px] min-w-[200px] shrink-0 flex-col bg-[#18181B]">
-        <div className="border-b border-white/[0.07] px-4 py-3">
-          <p className="text-[15px] font-medium text-white leading-tight">Otto</p>
-          <p className="text-[10px] text-white/35 leading-tight mt-[1px]">CoSeller Suite</p>
+        <div className="border-b border-white/[0.07] px-4 pb-3 pt-[18px]">
+          <p className="text-[15px] font-medium leading-tight text-white">Otto</p>
+          <p className="mt-[1px] text-[10px] leading-tight text-white/35">CoSeller Suite</p>
         </div>
-        <nav className="flex-1 space-y-[2px] px-2 py-3">
+        <nav className="flex-1 space-y-[2px] px-2 py-[12px]">
           {[
-            { label: "▦ Dashboard",  href: "/dashboard", active: false, badge: null },
-            { label: "◈ Kampanjer",  href: "#",          active: true,  badge: null },
-            { label: "✓ Mina todos", href: "#",          active: false, badge: 5 },
-            { label: "↗ Rapporter",  href: "#",          active: false, badge: null },
-            { label: "≡ Checklistor",href: "#",          active: false, badge: null },
-            { label: "⚙ ICP-bibliotek",href:"#",         active: false, badge: null },
+            { label: "▦ Dashboard", href: "/dashboard", active: false, badge: null as number | null },
+            { label: "◈ Kampanjer", href: "/dashboard", active: true, badge: campaignListCount },
+            { label: "✓ Mina todos", href: "/todos", active: false, badge: openTodoCount },
+            { label: "↗ Rapporter", href: "#", active: false, badge: null },
+            { label: "≡ Checklistor", href: "#", active: false, badge: null },
+            { label: "⚙ ICP-bibliotek", href: "#", active: false, badge: null },
           ].map(({ label, href, active, badge }) => (
             <Link key={label} href={href}
               className={`flex items-center gap-2 rounded-[6px] px-[10px] py-2 text-[12px] leading-tight ${active ? "bg-[rgba(29,158,117,0.2)] text-[#3ECFA0]" : "text-white/45 hover:text-white/70"}`}>
@@ -229,7 +240,7 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
         {/* STICKY HEADER */}
         <div className="shrink-0 border-b border-white/[0.07] bg-[#18181B]">
           <div className="flex items-center justify-between border-b border-white/[0.07] px-[20px] py-[11px]">
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Link href="/dashboard" className="text-[11px] text-white/40 hover:text-white/60">
                 ← Alla kampanjer
               </Link>
@@ -238,6 +249,9 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
               <span className="shrink-0 rounded-[10px] bg-[rgba(29,158,117,0.2)] px-[8px] py-[2px] text-[10px] font-medium text-[#3ECFA0]">
                 {STATUS_LABELS[campaign.status]}
               </span>
+              {sdrNames.length > 0 && (
+                <span className="shrink-0 text-[11px] text-white/30">SDR:</span>
+              )}
               {sdrNames.map((name) => (
                 <span
                   key={name}
@@ -292,8 +306,10 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
             <div className="px-[16px] py-[10px]">
               <p className="text-[9px] uppercase tracking-[0.5px] text-white/40">Rapport</p>
               <p className="text-[14px] font-medium leading-tight text-white">Tisdag</p>
-              <p className={`text-[10px] ${reportDaysLeft > 0 ? "text-[#FAC775]" : "text-[#E24B4A]"}`}>
-                om {reportDaysLeft} {reportDaysLeft === 1 ? "dag" : "dagar"}
+              <p className="text-[10px] text-[#FAC775]">
+                {reportDaysLeft === 0
+                  ? "idag"
+                  : `om ${reportDaysLeft} ${reportDaysLeft === 1 ? "dag" : "dagar"}`}
               </p>
             </div>
           </div>
@@ -316,7 +332,7 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
         </div>
 
         {/* TAB CONTENT */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto bg-[#F4F4F5] px-5 py-[18px]">
 
           {/* ── ÖVERSIKT ── */}
           {activeTab === "oversikt" && (
@@ -331,11 +347,15 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
                   </div>
                   <div className="rounded-[8px] border border-[#E4E4E7] bg-white px-[13px] py-[9px]">
                     <p className="mb-[3px] text-[10px] text-[#71717A]">Marknad</p>
-                    <p className="text-[13px] font-medium text-[#18181B]">{campaign.market}</p>
+                    <p className="text-[13px] font-medium text-[#18181B]">
+                      {campaign.market.replace(/\//g, " · ")}
+                    </p>
                   </div>
                   <div className="rounded-[8px] border border-[#E4E4E7] bg-white px-[13px] py-[9px]">
                     <p className="mb-[3px] text-[10px] text-[#71717A]">Kanaler</p>
-                    <p className="text-[13px] font-medium text-[#18181B]">{campaign.channels_enabled.join(" · ")}</p>
+                    <p className="text-[13px] font-medium text-[#18181B]">
+                      {campaign.channels_enabled.map((ch) => CHANNEL_SV[ch] ?? ch).join(" · ")}
+                    </p>
                   </div>
                   <div className="rounded-[8px] border border-[#E4E4E7] bg-white px-[13px] py-[9px]">
                     <p className="mb-[3px] text-[10px] text-[#71717A]">Kontraktstyp</p>
