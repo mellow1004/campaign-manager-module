@@ -145,9 +145,9 @@ export default async function TodoColumnsPage({ searchParams }: PageProps) {
             { label: "▦ Dashboard", href: "/dashboard", active: false },
             { label: "◈ Kampanjer", href: "/dashboard", active: false },
             { label: "✓ Mina todos", href: "/todos", active: true },
-            { label: "↗ Rapporter", href: "#", active: false },
-            { label: "≡ Checklistor", href: "#", active: false },
-            { label: "⚙ ICP-bibliotek", href: "#", active: false },
+            { label: "↗ Rapporter", href: "/rapporter", active: false },
+            { label: "≡ Checklistor", href: "/checklistor", active: false },
+            { label: "⚙ ICP-bibliotek", href: "/icp", active: false },
           ].map(({ label, href, active }) => (
             <Link
               key={label}

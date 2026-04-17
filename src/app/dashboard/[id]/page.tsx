@@ -210,9 +210,9 @@ export default async function CampaignDetailPage({ params, searchParams }: PageP
             { label: "▦ Dashboard", href: "/dashboard", active: false, badge: null as number | null },
             { label: "◈ Kampanjer", href: "/dashboard", active: true, badge: campaignListCount },
             { label: "✓ Mina todos", href: "/todos", active: false, badge: openTodoCount },
-            { label: "↗ Rapporter", href: "#", active: false, badge: null },
-            { label: "≡ Checklistor", href: "#", active: false, badge: null },
-            { label: "⚙ ICP-bibliotek", href: "#", active: false, badge: null },
+            { label: "↗ Rapporter", href: "/rapporter", active: false, badge: null },
+            { label: "≡ Checklistor", href: "/checklistor", active: false, badge: null },
+            { label: "⚙ ICP-bibliotek", href: "/icp", active: false, badge: null },
           ].map(({ label, href, active, badge }) => (
             <Link key={label} href={href}
               className={`flex items-center gap-2 rounded-[6px] px-[10px] py-2 text-[12px] leading-tight ${active ? "bg-[rgba(29,158,117,0.2)] text-[#3ECFA0]" : "text-white/45 hover:text-white/70"}`}>

@@ -171,9 +171,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             { label: "▦ Dashboard", href: "/dashboard", active: true, badge: null as number | null },
             { label: "◈ Kampanjer", href: "/dashboard", active: false, badge: campaigns.length },
             { label: "✓ Mina todos", href: "/todos", active: false, badge: openTodoCount },
-            { label: "↗ Rapporter", href: "#", active: false, badge: null },
-            { label: "≡ Checklistor", href: "#", active: false, badge: null },
-            { label: "⚙ ICP-bibliotek", href: "#", active: false, badge: null },
+            { label: "↗ Rapporter", href: "/rapporter", active: false, badge: null },
+            { label: "≡ Checklistor", href: "/checklistor", active: false, badge: null },
+            { label: "⚙ ICP-bibliotek", href: "/icp", active: false, badge: null },
           ].map(({ label, href, active, badge }) => (
             <Link
               key={label}
